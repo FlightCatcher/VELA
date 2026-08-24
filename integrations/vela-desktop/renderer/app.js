@@ -15,8 +15,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.1 · 就绪",
-    healthDegraded: "VELA 2.1 · 部分服务离线",
+    healthReady: "VELA 2.2 · 就绪",
+    healthDegraded: "VELA 2.2 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -146,8 +146,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.1 · Ready",
-    healthDegraded: "VELA 2.1 · Degraded",
+    healthReady: "VELA 2.2 · Ready",
+    healthDegraded: "VELA 2.2 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -299,6 +299,8 @@ const els = {
   modelCenterClose: document.querySelector("#model-center-close"),
   recommendedModels: document.querySelector("#recommended-models"),
   directModels: document.querySelector("#direct-models"),
+  imageModels: document.querySelector("#image-models"),
+  modelCenterSummary: document.querySelector("#model-center-summary"),
   directRuntimeInstall: document.querySelector("#direct-runtime-install"),
   providerForm: document.querySelector("#provider-form"),
   providerTemplate: document.querySelector("#provider-template"),
@@ -1450,6 +1452,35 @@ function renderModelCenter() {
       ? direct.map((item) => `<article class="model-card model-card--direct"><strong>${escapeHtml(item.label)}</strong><span>GGUF · ${escapeHtml(formatBytes(item.sizeBytes))} · ${item.runtimeReady ? "可直接运行" : "需安装直连引擎"}</span><button type="button" data-select-direct="${escapeHtml(item.id)}" ${item.runtimeReady ? "" : "disabled"}>${state.models.primary === item.id ? "正在使用" : "直接运行"}</button></article>`).join("")
       : `<div class="workspace-empty workspace-empty--action direct-model-empty"><span>还没有 GGUF 模型。可把已有模型放入 E:\\AI-Models，或下载适合本机的 Qwen3 4B Q4（约 2.5 GB）。</span><button type="button" data-download-direct="qwen3-4b-q4">下载到 E 盘</button></div>`;
   }
+  const imageModels = Array.isArray(state.models.imageModels) ? state.models.imageModels : [];
+  if (els.imageModels) {
+    els.imageModels.innerHTML = imageModels.map((item) => {
+      const button = item.installed
+        ? `<button type="button" data-use-image-model="${escapeHtml(item.id)}">${state.imageSettings.engine === item.id ? "正在使用" : "在生图中使用"}</button>`
+        : item.installable
+          ? `<button type="button" data-install-image-model="${escapeHtml(item.id)}">一键安装到模型盘</button>`
+          : `<button type="button" disabled>资源包暂不可自动安装</button>`;
+      const tags = (item.tags || []).map((tag) => `<em>${escapeHtml(tag)}</em>`).join("");
+      return `<article class="model-card model-card--image ${item.installed ? "is-installed" : ""}"><div class="model-card__top"><span class="model-card__icon">${escapeHtml(item.label.slice(0, 1))}</span><span class="model-card__status">${item.installed ? "已嵌入" : "未安装"}</span></div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.description)}${item.sizeBytes ? ` · ${escapeHtml(formatBytes(item.sizeBytes))}` : ""}</span><div class="model-card__tags">${tags}</div>${button}</article>`;
+    }).join("");
+  }
+  if (els.modelCenterSummary) {
+    const readyImages = imageModels.filter((item) => item.installed).length;
+    const localChat = (state.models.items || []).filter((item) => ["ollama", "direct"].includes(item.provider)).length;
+    els.modelCenterSummary.innerHTML = `<div><strong>${localChat}</strong><span>本地对话模型</span></div><div><strong>${readyImages}/${imageModels.length}</strong><span>生图模型已就绪</span></div><div><strong>${state.models.directRuntime?.installed ? "就绪" : "未安装"}</strong><span>直连引擎</span></div>`;
+  }
+}
+
+async function installImageModel(model) {
+  const response = await fetch("/api/image-models/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify({ model })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "生图模型安装失败");
+  toast("正在下载到 D 盘模型缓存；完成后会自动嵌入 VELA");
+  window.setTimeout(() => void refreshModelDownloads(), 1000);
 }
 
 async function installDirectRuntime() {
@@ -2172,6 +2203,30 @@ els.modelCenterButton?.addEventListener("click", () => {
   els.modelCenterDialog?.showModal();
 });
 els.modelCenterClose?.addEventListener("click", () => els.modelCenterDialog?.close());
+els.modelCenterDialog?.addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-model-tab]");
+  if (tab) {
+    els.modelCenterDialog.querySelectorAll("[data-model-tab]").forEach((item) => item.classList.toggle("is-active", item === tab));
+    els.modelCenterDialog.querySelectorAll("[data-model-panel]").forEach((panel) => panel.classList.toggle("is-active", panel.dataset.modelPanel === tab.dataset.modelTab));
+  }
+  const install = event.target.closest("[data-install-image-model]");
+  if (install) {
+    install.disabled = true;
+    void installImageModel(install.dataset.installImageModel).catch((error) => {
+      install.disabled = false;
+      toast(String(error));
+    });
+  }
+  const use = event.target.closest("[data-use-image-model]");
+  if (use) {
+    state.imageSettings.engine = use.dataset.useImageModel;
+    state.imageMode = true;
+    saveImageSettings();
+    renderAll();
+    els.modelCenterDialog.close();
+    toast("已切换生图模型");
+  }
+});
 els.recommendedModels?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-install-model]");
   if (!button) return;

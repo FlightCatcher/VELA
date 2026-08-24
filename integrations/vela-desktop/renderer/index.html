@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-            <small>VELA 2.1 · LOCAL INTELLIGENCE</small>
+            <small>VELA 2.2 · LOCAL INTELLIGENCE</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.1 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.2 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -322,22 +322,38 @@
 
       <dialog class="model-center" id="model-center-dialog">
         <div class="model-center__header">
-          <div><span>VELA</span><h2>模型中心</h2><p>本地模型一键安装，API 模型安全接入。</p></div>
-          <button class="media-dialog__close" id="model-center-close" type="button">×</button>
+          <div><span>VELA MODEL LIBRARY</span><h2>模型中心</h2><p>发现、安装并切换 VELA 的对话与生图能力。</p></div>
+          <button class="model-center__close" id="model-center-close" type="button" aria-label="关闭">×</button>
         </div>
-        <section><h3>推荐本地模型</h3><div class="model-center__grid" id="recommended-models"></div></section>
-        <section class="direct-models-section">
-          <div class="model-section-title"><div><h3>直连 GGUF</h3><p>由 VELA 直接运行模型，不经过 Ollama；同一时间只加载一个，避免占满内存。</p></div><button id="direct-runtime-install" type="button">安装直连引擎</button></div>
-          <div class="model-center__grid" id="direct-models"></div>
-        </section>
-        <section><h3>API 模型</h3><form class="provider-form" id="provider-form">
-          <select id="provider-template"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI Compatible</option><option value="custom">自定义</option></select>
-          <input id="provider-label" placeholder="显示名称" required />
-          <input id="provider-base-url" placeholder="API Base URL" required />
-          <input id="provider-model" placeholder="模型名称" required />
-          <input id="provider-api-key" type="password" placeholder="API Key（由 Windows 加密保存）" />
-          <button type="submit">保存并接入</button>
-        </form></section>
+        <div class="model-center__summary" id="model-center-summary"></div>
+        <nav class="model-center__tabs" aria-label="模型类型">
+          <button class="is-active" type="button" data-model-tab="chat">对话模型</button>
+          <button type="button" data-model-tab="image">生图模型</button>
+          <button type="button" data-model-tab="api">API 服务</button>
+        </nav>
+        <div class="model-center__viewport">
+          <section class="model-center__panel is-active" data-model-panel="chat">
+            <div class="model-section-title"><div><h3>推荐本地模型</h3><p>按你的 8 GB 显存筛选，安装后自动出现在模型切换器。</p></div></div>
+            <div class="model-center__grid" id="recommended-models"></div>
+            <div class="model-section-title model-section-title--spaced"><div><h3>直连 GGUF</h3><p>VELA 直接运行，不经过 Ollama；同一时间只加载一个模型。</p></div><button id="direct-runtime-install" type="button">安装直连引擎</button></div>
+            <div class="model-center__grid" id="direct-models"></div>
+          </section>
+          <section class="model-center__panel" data-model-panel="image">
+            <div class="model-section-title"><div><h3>本地生图引擎</h3><p>自动扫描 D/E 盘资源；已安装模型可直接切换到生图工作室。</p></div></div>
+            <div class="model-center__grid" id="image-models"></div>
+          </section>
+          <section class="model-center__panel" data-model-panel="api">
+            <div class="model-section-title"><div><h3>云端模型服务</h3><p>API Key 仅在本机通过 Windows 安全加密保存。</p></div></div>
+            <form class="provider-form" id="provider-form">
+              <select id="provider-template"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI Compatible</option><option value="custom">自定义</option></select>
+              <input id="provider-label" placeholder="显示名称" required />
+              <input id="provider-base-url" placeholder="API Base URL" required />
+              <input id="provider-model" placeholder="模型名称" required />
+              <input id="provider-api-key" type="password" placeholder="API Key（由 Windows 加密保存）" />
+              <button type="submit">保存并接入</button>
+            </form>
+          </section>
+        </div>
       </dialog>
 
       <input

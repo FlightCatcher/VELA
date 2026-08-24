@@ -1,5 +1,13 @@
 # Changelog
 
+## VELA 2.2.0 — unified model library - 2026-08-24
+
+- Rebuilt Model Center around clear Chat, Image, and API sections.
+- Embedded discovery for Animagine XL, Juggernaut XL, SSD-1B, and FLUX.2 resources on D/E model drives.
+- Added direct switching from an installed image model into VELA Image Studio.
+- Added verified one-click external-drive installation for supported image checkpoints.
+- Improved monochrome contrast, internal scrolling, status summaries, hover motion, and tab transitions.
+
 ## VELA 2.1.0 — direct local models and workspace UI - 2026-08-24
 
 - Added a native GGUF runtime path powered by llama.cpp, fully bypassing Ollama.

@@ -30,10 +30,11 @@ import {
   discoverGgufModels,
   findLlamaServer
 } from "./direct-model-runtime.mjs";
+import { imageModelCatalog, imageModelInstallAssets } from "./image-model-catalog.mjs";
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.1.0";
+const VELA_RELEASE = "2.2.0";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const NATIVE_IMAGE_PYTHON = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\runtime\\python.exe";
@@ -1673,8 +1674,22 @@ async function independentModelCatalog() {
       running: await gatewayIsAvailable(DIRECT_MODEL_PORT),
       root: DIRECT_RUNTIME_ROOT
     },
+    imageModels: imageModelCatalog(),
     items: [...direct, ...local, ...remote]
   };
+}
+
+async function installImageModel(model) {
+  const key = `image/${model}`;
+  if (modelDownloads.get(key)?.state === "downloading") return;
+  const assets = imageModelInstallAssets(model);
+  modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
+  try {
+    for (const asset of assets) await downloadFile(asset.url, asset.path, key);
+    modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
+  } catch (error) {
+    modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function downloadFile(url, destination, progressKey) {
@@ -1896,6 +1911,24 @@ function createServer() {
           return;
         }
         sendJson(res, 200, { downloads: [...modelDownloads.values()] });
+        return;
+      }
+
+      if (url.pathname === "/api/image-models/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        const model = String(payload?.model || "").trim();
+        try {
+          imageModelInstallAssets(model);
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+          return;
+        }
+        void installImageModel(model);
+        sendJson(res, 202, { ok: true, model, state: "downloading" });
         return;
       }
 
@@ -2448,7 +2481,10 @@ async function ensureOcuApi() {
       }
     }
 
-    const deadline = Date.now() + 12000;
+    // A portable first launch creates the bundled Agent virtual environment
+    // inside its extracted directory. On a busy or slower disk this can take
+    // well beyond 12 seconds even though startup is healthy.
+    const deadline = Date.now() + (app.isPackaged ? 60000 : 20000);
     while (Date.now() < deadline) {
       if (await gatewayIsAvailable(OCU_PORT)) return true;
       await new Promise((resolve) => setTimeout(resolve, 350));
