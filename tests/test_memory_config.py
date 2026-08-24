@@ -12,7 +12,7 @@ def test_memory_settings_defaults() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.memory_enabled is True
-    assert settings.memory_db_path == Path(".openclaw/memory.db")
+    assert settings.memory_db_path == Path(".vela/memory.db")
     assert settings.embedding_model == ("qwen3-embedding:0.6b")
     assert settings.memory_recall_limit == 5
 

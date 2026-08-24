@@ -4,61 +4,55 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
 $resolvedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $sourceRoot = Join-Path $resolvedRoot "integrations\vela-desktop"
-$appRoot = Join-Path $env:USERPROFILE ".openclaw\apps\openclaw-desktop"
-$distRoot = Join-Path $appRoot "dist"
-$executable = Join-Path $distRoot "VELA-Desktop.exe"
-$iconPath = Join-Path $appRoot "build\vela-icon.ico"
-$desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktop "VELA.lnk"
+$unpackedRoot = Join-Path $sourceRoot "dist\win-unpacked"
+$builtExecutable = Join-Path $unpackedRoot "VELA.exe"
+$appRoot = Join-Path $env:LOCALAPPDATA "Programs\VELA"
+$executable = Join-Path $appRoot "VELA.exe"
+$iconPath = Join-Path $appRoot "vela-icon.ico"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VELA.lnk"
+$startMenuShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "VELA.lnk"
 
 if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "package.json") -PathType Leaf)) {
     throw "VELA desktop source is missing: $sourceRoot"
 }
 
-New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
-Copy-Item -LiteralPath (Join-Path $sourceRoot "package.json") -Destination $appRoot -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "package-lock.json") -Destination $appRoot -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "src") -Destination $appRoot -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "renderer") -Destination $appRoot -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "build") -Destination $appRoot -Recurse -Force
-
 if (-not $SkipBuild) {
-    Push-Location $appRoot
+    Push-Location $sourceRoot
     try {
         & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "VELA desktop dependencies could not be installed."
-        }
-
+        if ($LASTEXITCODE -ne 0) { throw "VELA dependencies could not be installed." }
+        & npm run test
+        if ($LASTEXITCODE -ne 0) { throw "VELA desktop tests failed." }
         & npm run build
-        if ($LASTEXITCODE -ne 0) {
-            throw "VELA desktop build failed."
-        }
+        if ($LASTEXITCODE -ne 0) { throw "VELA desktop build failed." }
     }
-    finally {
-        Pop-Location
-    }
+    finally { Pop-Location }
 }
 
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-    throw "VELA desktop executable is missing: $executable"
+if (-not (Test-Path -LiteralPath $builtExecutable -PathType Leaf)) {
+    throw "VELA desktop executable is missing: $builtExecutable"
 }
+
+New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
+Copy-Item -Path (Join-Path $unpackedRoot "*") -Destination $appRoot -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot "build\vela-icon.ico") -Destination $iconPath -Force
 
 $shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $executable
-$shortcut.WorkingDirectory = $distRoot
-$shortcut.IconLocation = "$iconPath,0"
-$shortcut.Description = "VELA local AI desktop"
-$shortcut.Save()
+foreach ($shortcutPath in @($desktopShortcut, $startMenuShortcut)) {
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $executable
+    $shortcut.WorkingDirectory = $appRoot
+    $shortcut.IconLocation = "$iconPath,0"
+    $shortcut.Description = "VELA independent AI agent"
+    $shortcut.Save()
+}
 
-$installedShortcut = $shell.CreateShortcut($shortcutPath)
-if ($installedShortcut.TargetPath -ne $executable) {
+if ($shell.CreateShortcut($desktopShortcut).TargetPath -ne $executable) {
     throw "VELA desktop shortcut verification failed."
 }
 
-Write-Host "[OK] Native VELA desktop installed: $executable"
-Write-Host "[OK] Desktop shortcut created: $shortcutPath"
+Write-Host "[OK] VELA installed: $executable"
+Write-Host "[OK] Desktop shortcut: $desktopShortcut"
+Write-Host "[OK] Start menu shortcut: $startMenuShortcut"

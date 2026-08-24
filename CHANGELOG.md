@@ -1,5 +1,16 @@
 # Changelog
 
+## VELA 2.0.0 — independent agent release - 2026-08-24
+
+- Removed the desktop runtime dependency on OpenClaw Gateway and its configuration.
+- Added native VELA session APIs and persistent independent desktop conversations.
+- Added a Model Center with one-click Ollama downloads and immediate model switching.
+- Added DeepSeek, OpenAI-compatible and custom API provider forms with Windows-encrypted keys.
+- Bundled the VELA Agent runtime into the Windows desktop distribution.
+- Moved new runtime state to `.vela` and installed the desktop under the VELA product path.
+- Added desktop and Start menu shortcuts plus a reproducible one-command installer.
+- Verified the installed VELA 2.0 desktop against a real `qwen3:8b` conversation.
+
 ## VELA Agent 1.0 capability completion - 2026-08-24
 
 - Completed structured failure reflection with persisted error context and recovery advice.

@@ -10,12 +10,14 @@ from openclaw_ultimate.api import (
     LocalApiServer,
 )
 from openclaw_ultimate.config import Settings
+from openclaw_ultimate.core.runtime import Agent
 from openclaw_ultimate.diagnostics import (
     ComponentDiagnostic,
     ComponentState,
     DiagnosticReport,
 )
 from openclaw_ultimate.memory import SQLiteMemoryStore
+from openclaw_ultimate.models.base import ModelResponse
 
 
 def test_api_health_returns_structured_diagnostics(
@@ -164,7 +166,7 @@ def test_api_serves_vela_ui_and_meta(tmp_path) -> None:
     assert avatar.status == 200
     assert avatar.content_type == "image/png"
     assert meta.payload["data"]["name"] == "VELA"
-    assert meta.payload["data"]["version"] == "1.2.0"
+    assert meta.payload["data"]["version"] == "2.0.0"
 
 
 def test_memory_delete_requires_and_consumes_confirmation(tmp_path) -> None:
@@ -197,3 +199,36 @@ def test_memory_delete_requires_and_consumes_confirmation(tmp_path) -> None:
     assert deleted.status == 200
     with pytest.raises(KeyError):
         memory_store.get(memory.id)
+
+
+def test_independent_chat_persists_sessions_without_openclaw(tmp_path) -> None:
+    class EchoModel:
+        async def complete(self, messages, tools) -> ModelResponse:
+            return ModelResponse(content="VELA 独立回复")
+
+    application = ApiApplication(
+        Settings(
+            _env_file=None,
+            workspace_root=tmp_path,
+            session_db_path=tmp_path / "sessions.db",
+            governance_db_path=tmp_path / "governance.db",
+            openclaw_enabled=False,
+            comfyui_enabled=False,
+            knowledge_enabled=False,
+            mcp_enabled=False,
+        )
+    )
+    application._agent = Agent(name="vela-test", model=EchoModel())
+
+    chat = application.dispatch("POST", "/v1/chat", {"message": "你好"})
+    session_id = chat.payload["data"]["session_id"]
+    history = application.dispatch("GET", f"/v1/sessions/{session_id}/messages")
+    sessions = application.dispatch("GET", "/v1/sessions")
+
+    assert chat.status == 200
+    assert chat.payload["data"]["output"] == "VELA 独立回复"
+    assert [item["role"] for item in history.payload["data"]["messages"]] == [
+        "user",
+        "assistant",
+    ]
+    assert sessions.payload["data"]["sessions"][0]["id"] == session_id

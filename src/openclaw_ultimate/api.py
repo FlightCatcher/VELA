@@ -28,6 +28,7 @@ from openclaw_ultimate.branding import (
 )
 from openclaw_ultimate.bridge import handle_request
 from openclaw_ultimate.config import Settings, load_settings
+from openclaw_ultimate.core.messages import Message
 from openclaw_ultimate.core.runtime import Agent, AgentRuntime
 from openclaw_ultimate.diagnostics import (
     DiagnosticReport,
@@ -53,6 +54,7 @@ from openclaw_ultimate.rag import (
     SQLiteKnowledgeStore,
     build_knowledge_base,
 )
+from openclaw_ultimate.sessions import SQLiteSessionStore
 from openclaw_ultimate.tools import WorkspaceTools
 
 logger = logging.getLogger(__name__)
@@ -87,9 +89,21 @@ class ApiApplication:
         self.recovered_plans = self.plan_store.recover_interrupted_plans()
         self.knowledge_store = SQLiteKnowledgeStore(settings.knowledge_db_path)
         self.memory_store = SQLiteMemoryStore(settings.memory_db_path)
+        self._session_store: SQLiteSessionStore | None = None
+        self._session_store_lock = Lock()
         self._agent: Agent | None = None
         self._agent_lock = Lock()
         self.ui_root = Path(__file__).with_name("ui")
+
+    @property
+    def session_store(self) -> SQLiteSessionStore:
+        """Lazily open session state only when chat/history is used."""
+
+        if self._session_store is None:
+            with self._session_store_lock:
+                if self._session_store is None:
+                    self._session_store = SQLiteSessionStore(self.settings.session_db_path)
+        return self._session_store
 
     def dispatch(
         self,
@@ -137,6 +151,37 @@ class ApiApplication:
                         ],
                     },
                 )
+
+            if method == "GET" and path == "/v1/sessions":
+                sessions = self.session_store.list_sessions(
+                    limit=self._bounded_int(payload.get("limit", 100), minimum=1, maximum=500)
+                )
+                return self._ok({"sessions": [asdict(item) for item in sessions]})
+
+            if method == "POST" and path == "/v1/sessions":
+                title = str(payload.get("title", "新会话")).strip() or "新会话"
+                return self._ok(asdict(self.session_store.create_session(title)))
+
+            session_route = self._parse_session_route(path)
+            if session_route is not None:
+                session_id, operation = session_route
+                if method == "GET" and operation == "messages":
+                    messages = self.session_store.load_messages(
+                        session_id,
+                        limit=self.settings.history_message_limit,
+                    )
+                    return self._ok(
+                        {
+                            "session": asdict(self.session_store.get_session(session_id)),
+                            "messages": [
+                                {"role": message.role, "content": message.content or ""}
+                                for message in messages
+                            ],
+                        }
+                    )
+                if method == "DELETE" and operation == "delete":
+                    self.session_store.delete_session(session_id)
+                    return self._ok({"deleted": session_id})
 
             if method == "GET" and path == "/v1/plans":
                 plans = self.plan_store.list(
@@ -339,15 +384,32 @@ class ApiApplication:
                     payload,
                     "message",
                 )
+                requested_session_id = self._optional_text(payload.get("session_id"))
+                chat_session_id: str
+                if requested_session_id is None:
+                    chat_session_id = self.session_store.create_session(message[:60]).id
+                else:
+                    chat_session_id = requested_session_id
+                    self.session_store.get_session(chat_session_id)
+                history = self.session_store.load_messages(
+                    chat_session_id,
+                    limit=self.settings.history_message_limit,
+                )
+                self.session_store.append_messages(chat_session_id, (Message.user(message),))
                 agent = self._chat_agent()
                 chat_result = asyncio.run(
                     AgentRuntime().run(
                         agent,
-                        message,
+                        self._chat_context(history, message),
                     )
+                )
+                self.session_store.append_messages(
+                    chat_session_id,
+                    (Message.assistant(chat_result.output),),
                 )
                 return self._ok(
                     {
+                        "session_id": chat_session_id,
                         "output": chat_result.output,
                         "steps": chat_result.steps,
                     }
@@ -502,6 +564,15 @@ class ApiApplication:
         return self._agent
 
     @staticmethod
+    def _chat_context(history: tuple[Message, ...], message: str) -> str:
+        if not history:
+            return message
+        transcript = "\n".join(
+            f"{item.role}: {item.content or ''}" for item in history[-20:] if item.content
+        )
+        return f"以下是本地会话历史：\n{transcript}\n\n当前用户请求：\n{message}"
+
+    @staticmethod
     def _serialize_memory(memory: Any) -> dict[str, Any]:
         return {
             "id": memory.id,
@@ -640,6 +711,17 @@ class ApiApplication:
         ):
             return parts[2], parts[3]
 
+        return None
+
+    @staticmethod
+    def _parse_session_route(path: str) -> tuple[str, str] | None:
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 4
+            and parts[:2] == ["v1", "sessions"]
+            and parts[3] in {"messages", "delete"}
+        ):
+            return parts[2], parts[3]
         return None
 
     @staticmethod

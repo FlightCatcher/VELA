@@ -242,6 +242,7 @@ venv/
 
 # Local session database
 .openclaw/
+.vela/
 
 # Local acceptance artifacts
 work/

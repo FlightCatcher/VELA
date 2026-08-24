@@ -43,7 +43,7 @@ const translations = {
     localPrivate: "本地 · 私密",
     messagePlaceholder: "给 VELA 发消息",
     modelLabel: "模型",
-    modelNote: "当前模型 · OpenClaw 执行引擎",
+    modelNote: "当前模型 · VELA 独立执行引擎",
     modelLoading: "正在读取模型",
     modelSwitching: "正在切换模型…",
     modelSwitched: "模型已切换",
@@ -174,7 +174,7 @@ const translations = {
     localPrivate: "Local · Private",
     messagePlaceholder: "Message VELA",
     modelLabel: "Model",
-    modelNote: "Current model · OpenClaw execution engine",
+    modelNote: "Current model · VELA independent runtime",
     modelLoading: "Loading models",
     modelSwitching: "Switching model…",
     modelSwitched: "Model switched",
@@ -294,6 +294,16 @@ const els = {
   mediaDialog: document.querySelector("#media-dialog"),
   mediaDialogImage: document.querySelector("#media-dialog-image"),
   modelSelect: document.querySelector("#model-select"),
+  modelCenterButton: document.querySelector("#model-center-button"),
+  modelCenterDialog: document.querySelector("#model-center-dialog"),
+  modelCenterClose: document.querySelector("#model-center-close"),
+  recommendedModels: document.querySelector("#recommended-models"),
+  providerForm: document.querySelector("#provider-form"),
+  providerTemplate: document.querySelector("#provider-template"),
+  providerLabel: document.querySelector("#provider-label"),
+  providerBaseUrl: document.querySelector("#provider-base-url"),
+  providerModel: document.querySelector("#provider-model"),
+  providerApiKey: document.querySelector("#provider-api-key"),
   commandDeck: document.querySelector("#command-deck"),
   workspaceToggle: document.querySelector("#workspace-toggle"),
   deckStatus: document.querySelector("#deck-status"),
@@ -361,7 +371,7 @@ const state = {
   health: { loading: true, ok: false, services: {}, resources: null },
   imageSettings: loadImageSettings(),
   models: { primary: "", items: [] },
-  language: localStorage.getItem("openclaw.desktop.language") === "en" ? "en" : "zh",
+  language: (localStorage.getItem("vela.desktop.language") ?? localStorage.getItem("openclaw.desktop.language")) === "en" ? "en" : "zh",
   optimistic: null,
   pending: false,
   thinkingPhase: 0,
@@ -396,6 +406,7 @@ function loadTheme() {
 }
 
 let currentSessionKey =
+  localStorage.getItem("vela.desktop.currentSession") ??
   localStorage.getItem("openclaw.desktop.currentSession") ??
   state.sessions[0]?.key ??
   defaultSession.key;
@@ -406,7 +417,7 @@ function t(key) {
 
 function loadImageSettings() {
   try {
-    const parsed = JSON.parse(localStorage.getItem("openclaw.desktop.imageSettings") ?? "{}");
+    const parsed = JSON.parse(localStorage.getItem("vela.desktop.imageSettings") ?? localStorage.getItem("openclaw.desktop.imageSettings") ?? "{}");
     const migrationKey = "vela.desktop.imageWorkflowV1";
     const migrated = localStorage.getItem(migrationKey) === "1";
     const migratedEngine = migrated ? parsed.engine : "auto";
@@ -470,12 +481,12 @@ function saveLocalImageMessage(message, sessionKey = currentSessionKey) {
 }
 
 function saveImageSettings() {
-  localStorage.setItem("openclaw.desktop.imageSettings", JSON.stringify(state.imageSettings));
+  localStorage.setItem("vela.desktop.imageSettings", JSON.stringify(state.imageSettings));
 }
 
 function loadSessions() {
   try {
-    const parsed = JSON.parse(localStorage.getItem("openclaw.desktop.sessions") ?? "[]");
+    const parsed = JSON.parse(localStorage.getItem("vela.desktop.sessions") ?? localStorage.getItem("openclaw.desktop.sessions") ?? "[]");
     if (Array.isArray(parsed) && parsed.length) return parsed.slice(0, 30);
   } catch {
     // Ignore malformed local state.
@@ -485,8 +496,8 @@ function loadSessions() {
 
 function saveSessions() {
   state.sessions.sort((a, b) => b.updatedAt - a.updatedAt);
-  localStorage.setItem("openclaw.desktop.sessions", JSON.stringify(state.sessions.slice(0, 30)));
-  localStorage.setItem("openclaw.desktop.currentSession", currentSessionKey);
+  localStorage.setItem("vela.desktop.sessions", JSON.stringify(state.sessions.slice(0, 30)));
+  localStorage.setItem("vela.desktop.currentSession", currentSessionKey);
 }
 
 function currentSession() {
@@ -507,8 +518,19 @@ function updateCurrentSession(patch) {
 
 async function newSession() {
   if (state.pending) await abortRun();
-  const key = `agent:main:desktop-${crypto.randomUUID()}`;
-  state.sessions.unshift({ key, title: t("untitled"), updatedAt: Date.now() });
+  const created = state.connected
+      ? await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+        body: JSON.stringify({ title: t("untitled") })
+      }).then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "无法创建会话");
+        return payload;
+      })
+    : { id: crypto.randomUUID(), title: t("untitled"), updated_at: new Date().toISOString() };
+  const key = created.id;
+  state.sessions.unshift({ key, title: created.title, updatedAt: Date.parse(created.updated_at) || Date.now() });
   currentSessionKey = key;
   state.history = [];
   state.optimistic = null;
@@ -531,16 +553,18 @@ async function deleteSession(key) {
   if (!confirmed) return;
   if (currentSessionKey === key && state.pending) await abortRun();
 
+  if (state.connected) {
+    await fetch(`/api/sessions/${encodeURIComponent(key)}/delete`, {
+      method: "DELETE",
+      headers: { "X-Vela-App-Key": appKey }
+    }).catch(() => {});
+  }
+
   state.sessions = state.sessions.filter((session) => session.key !== key);
   delete state.localImageMessages[key];
-  if (currentSessionKey === key || !state.sessions.length) {
-    const replacement = {
-      key: `agent:main:desktop-${crypto.randomUUID()}`,
-      title: t("untitled"),
-      updatedAt: Date.now()
-    };
-    state.sessions.unshift(replacement);
-    currentSessionKey = replacement.key;
+  const needsReplacement = currentSessionKey === key || !state.sessions.length;
+  if (needsReplacement) {
+    currentSessionKey = state.sessions[0]?.key ?? crypto.randomUUID();
     state.history = [];
     state.optimistic = null;
     state.pending = false;
@@ -549,7 +573,8 @@ async function deleteSession(key) {
   saveLocalImageMessages();
   saveSessions();
   renderAll(true);
-  if (state.connected) void refreshHistory(true);
+  if (needsReplacement && state.connected && !state.sessions.length) await newSession();
+  else if (state.connected) void refreshHistory(true);
 }
 
 async function setSession(key) {
@@ -1067,7 +1092,7 @@ function renderHealthBadge() {
 async function refreshHealth() {
   try {
     const response = await fetch("/api/health", {
-      headers: { "X-OpenClaw-App-Key": appKey },
+      headers: { "X-Vela-App-Key": appKey },
       cache: "no-store"
     });
     if (!response.ok) throw new Error("Health check unavailable");
@@ -1232,7 +1257,7 @@ function renderWorkspacePanel() {
           </button>`).join("")
       : `<div class="workspace-empty">${escapeHtml(t("workspaceEmpty"))}</div>`;
     els.workspacePanelDetail.innerHTML = `
-      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "OpenClaw 提供对话路由；VELA 直接加载本地生图模型。" : "OpenClaw routes chat; VELA loads local image models directly.")}</p></div>
+      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "VELA 独立管理对话、本地模型、API 模型与生图引擎。" : "VELA independently manages chat, local and API models, and image engines.")}</p></div>
       <div class="workspace-component-list">${components.map((item) => `<div><span>${escapeHtml(item.name ?? "component")}</span><strong class="status-pill status-pill--${escapeHtml(String(item.state ?? "offline"))}">${escapeHtml(String(item.state ?? "offline"))}</strong></div>`).join("") || `<div class="workspace-empty">${escapeHtml(t("workspaceNoDetail"))}</div>`}</div>`;
     return;
   }
@@ -1290,7 +1315,7 @@ async function refreshWorkspace() {
   state.workspaceData.loading = true;
   renderWorkspacePanel();
   try {
-    const headers = { "X-OpenClaw-App-Key": appKey };
+    const headers = { "X-Vela-App-Key": appKey };
     const [statusResponse, plansResponse] = await Promise.all([
       fetch("/api/ocu/status", { headers, cache: "no-store" }),
       fetch("/api/ocu/plans", { headers, cache: "no-store" })
@@ -1316,7 +1341,7 @@ async function selectWorkspacePlan(planId, redraw = true) {
   if (redraw) renderWorkspacePanel();
   try {
     const response = await fetch(`/api/ocu/plans/${encodeURIComponent(planId)}`, {
-      headers: { "X-OpenClaw-App-Key": appKey },
+      headers: { "X-Vela-App-Key": appKey },
       cache: "no-store"
     });
     if (!response.ok) throw new Error("Could not load plan detail.");
@@ -1388,16 +1413,88 @@ async function loadModels() {
   if (!els.modelSelect) return;
   try {
     const response = await fetch("/api/models", {
-      headers: { "X-OpenClaw-App-Key": appKey },
+      headers: { "X-Vela-App-Key": appKey },
       cache: "no-store"
     });
     if (!response.ok) throw new Error(`Model list failed (${response.status})`);
     state.models = await response.json();
     renderModelPicker();
+    renderModelCenter();
   } catch (error) {
     renderModelPicker();
     toast(String(error));
   }
+}
+
+function renderModelCenter() {
+  if (!els.recommendedModels) return;
+  const installed = new Set((state.models.items || []).map((item) => item.id));
+  els.recommendedModels.innerHTML = (state.models.recommended || []).map((item) => {
+    const isInstalled = installed.has(`ollama/${item.id}`);
+    return `<article class="model-card"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.use)} · ${escapeHtml(item.size)} · ${escapeHtml(item.fit)}</span><button type="button" data-install-model="${escapeHtml(item.id)}" ${isInstalled ? "disabled" : ""}>${isInstalled ? "已安装" : "一键安装"}</button></article>`;
+  }).join("");
+}
+
+async function installModel(model) {
+  const response = await fetch("/api/models/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify({ model })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "模型安装失败");
+  toast(`正在下载 ${model}，完成后即可直接使用`);
+  window.setTimeout(() => void refreshModelDownloads(), 800);
+}
+
+async function refreshModelDownloads() {
+  if (!els.recommendedModels) return;
+  const response = await fetch("/api/models/downloads", {
+    headers: { "X-Vela-App-Key": appKey },
+    cache: "no-store"
+  });
+  if (!response.ok) return;
+  const payload = await response.json();
+  const active = Array.isArray(payload.downloads)
+    ? payload.downloads.find((item) => item.status === "downloading")
+    : null;
+  if (active) {
+    toast(`${active.model} · ${Math.max(0, Math.round(active.progress || 0))}%`);
+    window.setTimeout(() => void refreshModelDownloads(), 2500);
+    return;
+  }
+  await loadModels();
+}
+
+function applyProviderTemplate() {
+  const template = (state.models.providerTemplates || []).find((item) => item.id === els.providerTemplate?.value);
+  if (!template) return;
+  els.providerLabel.value = template.label;
+  els.providerBaseUrl.value = template.baseUrl;
+  els.providerModel.value = template.model;
+}
+
+async function saveProvider(event) {
+  event.preventDefault();
+  const id = els.providerTemplate.value === "custom"
+    ? els.providerLabel.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-")
+    : els.providerTemplate.value;
+  const response = await fetch("/api/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify({
+      id,
+      label: els.providerLabel.value,
+      baseUrl: els.providerBaseUrl.value,
+      model: els.providerModel.value,
+      apiKey: els.providerApiKey.value
+    })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "API 模型保存失败");
+  els.providerApiKey.value = "";
+  await loadModels();
+  toast("API 模型已安全保存，可以立即切换使用");
 }
 
 async function switchModel(modelId) {
@@ -1410,7 +1507,7 @@ async function switchModel(modelId) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-OpenClaw-App-Key": appKey
+        "X-Vela-App-Key": appKey
       },
       body: JSON.stringify({ model: modelId })
     });
@@ -1533,11 +1630,11 @@ async function sendMessage() {
   const runId = crypto.randomUUID();
   state.cancelledTurn = null;
   state.activeUserText = rawText || t("noText");
-  const imageController = useDirectImagePipeline ? new AbortController() : null;
+  const requestController = new AbortController();
   const activeRun = runCoordinator.start({
     kind: useDirectImagePipeline ? "image" : "chat",
     requestId: runId,
-    controller: imageController
+    controller: requestController
   });
   const sentAt = Date.now();
 
@@ -1587,14 +1684,14 @@ async function sendMessage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-OpenClaw-App-Key": appKey
+          "X-Vela-App-Key": appKey
         },
         body: JSON.stringify({
           prompt: rawText,
           settings: state.imageSettings,
           attachments: attachments.filter((item) => item.type === "image").slice(0, 1)
         }),
-        signal: imageController.signal
+        signal: requestController.signal
       });
       const payload = await response.json();
       if (!runCoordinator.isCurrent(activeRun)) return;
@@ -1645,26 +1742,30 @@ async function sendMessage() {
       renderAll(true);
       return;
     }
-    const response = await state.client.request("chat.send", {
-      sessionKey: currentSessionKey,
-      agentId: "main",
-      message: rawText,
-      deliver: false,
-      idempotencyKey: runId,
-      attachments: attachments.length ? attachments : undefined
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Vela-App-Key": appKey
+      },
+      body: JSON.stringify({ message: rawText, session_id: currentSessionKey }),
+      signal: requestController.signal
     });
-    const stillCurrent = runCoordinator.attachServerRunId(activeRun, response?.runId);
-    if (!stillCurrent) {
-      if (response?.runId) {
-        await state.client.request("chat.abort", {
-          sessionKey: currentSessionKey,
-          runId: response.runId
-        }).catch(() => {});
-      }
-      return;
-    }
-    if (response?.runId) state.activeRunId = response.runId;
-    scheduleRefresh(450);
+    const payload = await response.json();
+    if (!runCoordinator.isCurrent(activeRun)) return;
+    if (!response.ok) throw new Error(payload.error || t("sendFailed"));
+    state.history = [
+      ...state.history.filter((item) => !item._optimistic),
+      { role: "user", content: rawText, timestamp: sentAt },
+      { role: "assistant", content: payload.output, timestamp: Date.now() }
+    ];
+    state.pending = false;
+    state.activeRunId = null;
+    state.activeUserText = "";
+    state.optimistic = null;
+    runCoordinator.finish(activeRun);
+    stopThinkingFlow();
+    renderAll(true);
   } catch (error) {
     if (!runCoordinator.isCurrent(activeRun) || /cancelled|canceled|aborted|fetch failed/i.test(String(error))) return;
     if (isImageRequest) {
@@ -1695,7 +1796,6 @@ async function abortRun() {
   const cancelledUserText = state.activeUserText;
   const wasImageRun = state.activeImageRun;
   const sessionKey = currentSessionKey;
-  const backendRunId = cancelledRun?.serverRunId || state.activeRunId;
   state.pending = false;
   state.activeRunId = null;
   if (!wasImageRun && cancelledUserText) {
@@ -1710,29 +1810,15 @@ async function abortRun() {
     try {
       await fetch("/api/image-cancel", {
         method: "POST",
-        headers: { "X-OpenClaw-App-Key": appKey }
+        headers: { "X-Vela-App-Key": appKey }
       });
       toast(state.language === "zh" ? "正在停止生图任务" : "Stopping image generation");
     } catch {
       // The local job may already have completed.
     }
   }
-  try {
-    if (!wasImageRun) {
-      await state.client.request("chat.abort", {
-        sessionKey,
-        agentId: "main",
-        preserveSideRuns: false,
-        ...(backendRunId ? { runId: backendRunId } : {})
-      });
-      await state.client.request("chat.abort", {
-        sessionKey,
-        agentId: "main",
-        preserveSideRuns: false
-      }).catch(() => {});
-    }
-  } catch {
-    // The run may already have completed.
+  if (!wasImageRun && cancelledRun) {
+    toast(state.language === "zh" ? "任务已取消" : "Task cancelled");
   }
   scheduleRefresh(250);
 }
@@ -1753,10 +1839,12 @@ async function refreshHistory(forceScroll = false) {
   state.refreshInFlight = true;
   const requestedKey = currentSessionKey;
   try {
-    const result = await state.client.request("chat.history", {
-      sessionKey: requestedKey,
-      agentId: "main",
-      limit: 200
+    const result = await fetch(`/api/sessions/${encodeURIComponent(requestedKey)}/messages`, {
+      headers: { "X-Vela-App-Key": appKey },
+      cache: "no-store"
+    }).then((response) => {
+      if (!response.ok) throw new Error(`Session history failed (${response.status})`);
+      return response.json();
     });
     if (requestedKey !== currentSessionKey) return;
     const next = Array.isArray(result?.messages)
@@ -1869,7 +1957,7 @@ async function refreshImageStatus() {
   const elapsedSeconds = Math.max(0, (Date.now() - state.imageStartedAt) / 1000);
   try {
     const status = await fetch("/api/image-status", {
-      headers: { "X-OpenClaw-App-Key": appKey },
+      headers: { "X-Vela-App-Key": appKey },
       cache: "no-store"
     }).then((response) => response.json());
 
@@ -1935,62 +2023,37 @@ function startPolling() {
   }, 6000);
 }
 
-async function connectGateway() {
+async function connectVela() {
   try {
     state.bootstrap = await fetch("/api/bootstrap", {
-      headers: { "X-OpenClaw-App-Key": appKey }
+      headers: { "X-Vela-App-Key": appKey }
     }).then((response) => {
       if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
       return response.json();
     });
-    renderConnection();
-
-    const gatewayModule = await import(state.bootstrap.gatewayModuleUrl);
-    const GatewayClient =
-      gatewayModule.GatewayBrowserClient ??
-      gatewayModule.GatewayClient ??
-      gatewayModule.t ??
-      Object.values(gatewayModule).find(
-        (candidate) =>
-          typeof candidate === "function" &&
-          typeof candidate.prototype?.start === "function" &&
-          typeof candidate.prototype?.request === "function"
-      );
-    if (typeof GatewayClient !== "function") {
-      throw new Error("Gateway client compatibility check failed. Update VELA Desktop.");
+    const remoteSessions = await fetch("/api/sessions", {
+      headers: { "X-Vela-App-Key": appKey },
+      cache: "no-store"
+    }).then((response) => response.json());
+    state.sessions = Array.isArray(remoteSessions.sessions)
+      ? remoteSessions.sessions.map((item) => ({
+          key: item.id,
+          title: item.title,
+          updatedAt: Date.parse(item.updated_at) || Date.now()
+        }))
+      : [];
+    state.client = { mode: "vela-independent" };
+    state.connected = true;
+    if (!state.sessions.length) await newSession();
+    else if (!state.sessions.some((item) => item.key === currentSessionKey)) {
+      currentSessionKey = state.sessions[0].key;
     }
-    state.client?.stop?.();
-    state.client = new GatewayClient({
-      url: state.bootstrap.gatewayUrl,
-      token: state.bootstrap.token,
-      clientName: "openclaw-control-ui",
-      clientVersion: `openclaw-desktop-${state.bootstrap.version}`,
-      platform: "win32",
-      mode: "webchat",
-      onHello: () => {
-        state.connected = true;
-        renderConnection();
-        startHealthPolling();
-        renderModelPicker();
-        startPolling();
-        void refreshHistory(true);
-      },
-      onClose: () => {
-        state.connected = false;
-        renderConnection();
-      },
-      onEvent: (event) => {
-        if (
-          event?.event === "chat" ||
-          event?.event === "session.message" ||
-          event?.event === "sessions.changed" ||
-          String(event?.event ?? "").startsWith("task")
-        ) {
-          scheduleRefresh(180);
-        }
-      }
-    });
-    state.client.start();
+    saveSessions();
+    renderConnection();
+    startHealthPolling();
+    renderModelPicker();
+    startPolling();
+    await refreshHistory(true);
   } catch (error) {
     state.connected = false;
     state.bootstrap = state.bootstrap ?? {};
@@ -2027,7 +2090,7 @@ function openMedia(src) {
 els.newChatButton.addEventListener("click", () => void newSession());
 els.languageButton.addEventListener("click", () => {
   state.language = state.language === "zh" ? "en" : "zh";
-  localStorage.setItem("openclaw.desktop.language", state.language);
+  localStorage.setItem("vela.desktop.language", state.language);
   applyLanguage();
 });
 els.themeButton.addEventListener("click", () => {
@@ -2056,8 +2119,26 @@ els.workspacePanelList?.addEventListener("click", (event) => {
   if (button) void selectWorkspacePlan(button.dataset.planId);
 });
 els.sidebarButton.addEventListener("click", () => els.sidebar.classList.toggle("is-open"));
-els.retryButton.addEventListener("click", connectGateway);
+els.retryButton.addEventListener("click", connectVela);
 els.modelSelect?.addEventListener("change", () => void switchModel(els.modelSelect.value));
+els.modelCenterButton?.addEventListener("click", () => {
+  renderModelCenter();
+  els.modelCenterDialog?.showModal();
+});
+els.modelCenterClose?.addEventListener("click", () => els.modelCenterDialog?.close());
+els.recommendedModels?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-install-model]");
+  if (!button) return;
+  button.disabled = true;
+  void installModel(button.dataset.installModel).catch((error) => {
+    button.disabled = false;
+    toast(String(error));
+  });
+});
+els.providerTemplate?.addEventListener("change", applyProviderTemplate);
+els.providerForm?.addEventListener("submit", (event) => {
+  void saveProvider(event).catch((error) => toast(String(error)));
+});
 els.workspaceToggle?.addEventListener("click", () => {
   els.commandDeck.classList.toggle("is-collapsed");
   renderCommandDeck();
@@ -2139,5 +2220,5 @@ window.addEventListener("drop", async (event) => {
 applyLanguage();
 renderAll(true);
 autoResizeComposer();
-void connectGateway();
+void connectVela();
 void loadModels();

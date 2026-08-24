@@ -1,9 +1,9 @@
 {
   "name": "vela-desktop",
-  "version": "4.16.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "VELA local AI desktop powered by OpenClaw and DeepSeek.",
+  "description": "VELA independent local-first AI agent desktop.",
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
@@ -37,6 +37,14 @@
       "references/**/*",
       "build/vela-icon.ico",
       "package.json"
+    ],
+    "extraResources": [
+      { "from": "../../src", "to": "agent/src" },
+      { "from": "../../configs", "to": "agent/configs" },
+      { "from": "../../prompts", "to": "agent/prompts" },
+      { "from": "../../pyproject.toml", "to": "agent/pyproject.toml" },
+      { "from": "../../uv.lock", "to": "agent/uv.lock" },
+      { "from": "../../README.md", "to": "agent/README.md" }
     ],
     "win": {
       "icon": "build/vela-icon.ico",

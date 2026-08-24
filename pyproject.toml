@@ -1,7 +1,7 @@
 
 [project]
-name = "openclaw-ultimate"
-version = "1.2.0"
+name = "vela-agent"
+version = "2.0.0"
 description = "VELA — verified, local-first AI agent operating system"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -19,7 +19,6 @@ dependencies = [
 ]
 
 [project.scripts]
-ocu = "openclaw_ultimate.cli:app"
 vela = "openclaw_ultimate.cli:app"
 
 [dependency-groups]
@@ -60,7 +59,7 @@ target-version = "py312"
 python_version = "3.12"
 mypy_path = "src"
 explicit_package_bases = true
-cache_dir = ".openclaw/mypy-cache"
+cache_dir = ".vela/mypy-cache"
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, safeStorage, shell } from "electron";
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -18,6 +18,12 @@ import {
   selectReferenceCandidate,
   imageJobIsStale
 } from "./image-workflow.mjs";
+import {
+  loadModelCenterConfig,
+  modelRuntimeEnvironment,
+  publicModelCenterConfig,
+  saveModelCenterConfig
+} from "./model-center.mjs";
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
@@ -27,19 +33,47 @@ const NATIVE_IMAGE_PORT = 8190;
 const NATIVE_IMAGE_PYTHON = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\runtime\\python.exe";
 const NATIVE_IMAGE_PACKAGES = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\python_packages";
 const OCU_PORT = 8765;
-const OCU_PROJECT_ROOT = process.env.OCU_PROJECT_ROOT ?? "E:\\Projects\\OpenClaw-Ultimate";
 const COMFY_INPUT_ROOT = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\input";
 const COMFY_UPSCALE_ROOT = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\models\\upscale_models";
 const COMFY_OUTPUT_ROOT = fs.existsSync("E:\\AI-Models\\Image-Generation")
   ? "E:\\AI-Models\\Image-Generation\\Outputs"
-  : path.join(process.env.USERPROFILE ?? os.homedir(), ".openclaw", "media", "comfyui");
+  : path.join(app.getPath("userData"), "media", "images");
 const CHARACTER_MEMORY_ROOT = "E:\\AI-Models\\Image-Generation\\Character-Memory";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
+const VELA_PROJECT_ROOT = process.env.VELA_PROJECT_ROOT
+  ?? process.env.OCU_PROJECT_ROOT
+  ?? (app.isPackaged ? path.join(process.resourcesPath, "agent") : path.resolve(appRoot, "..", ".."));
 const rendererRoot = path.join(appRoot, "renderer");
 const appKey = !app.isPackaged && process.env.VELA_E2E_APP_KEY?.trim()
   ? process.env.VELA_E2E_APP_KEY.trim()
   : crypto.randomBytes(24).toString("hex");
+const modelDownloads = new Map();
+
+function modelCenterConfigPath() {
+  return path.join(app.getPath("userData"), "models.json");
+}
+
+function readModelCenterConfig() {
+  return loadModelCenterConfig(modelCenterConfigPath());
+}
+
+function decryptApiKey(encrypted) {
+  if (!encrypted || !safeStorage.isEncryptionAvailable()) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return "";
+  }
+}
+
+function encryptApiKey(value) {
+  if (!value) return "";
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Windows secure storage is unavailable; the API key was not saved.");
+  }
+  return safeStorage.encryptString(value).toString("base64");
+}
 
 function nativeImageWorkerPath() {
   const root = appRoot.includes("app.asar")
@@ -122,59 +156,6 @@ const mimeTypes = {
   ".webp": "image/webp"
 };
 
-function readOpenClawConfig() {
-  const configPath = path.join(process.env.USERPROFILE ?? app.getPath("home"), ".openclaw", "openclaw.json");
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const token = config?.gateway?.auth?.token;
-  const port = Number(config?.gateway?.port ?? 18789);
-  if (!token || typeof token !== "string") {
-    throw new Error("OpenClaw gateway token is missing.");
-  }
-  return { configPath, token, port };
-}
-
-function modelCatalog(config) {
-  const configured = config?.agents?.defaults?.models ?? {};
-  const primary = String(config?.agents?.defaults?.model?.primary ?? "");
-  const fallbackIds = Array.isArray(config?.agents?.defaults?.model?.fallbacks)
-    ? config.agents.defaults.model.fallbacks.map(String)
-    : [];
-  const ids = [...new Set([
-    primary,
-    ...fallbackIds,
-    ...Object.keys(configured)
-  ])].filter((id) => id && !/(?:embedding|embed)/i.test(id));
-  const items = ids.map((id) => {
-    const alias = configured[id]?.alias;
-    const short = id.includes("/") ? id.split("/").slice(1).join("/") : id;
-    const provider = id.startsWith("ollama/") ? "本地" : id.startsWith("deepseek/") ? "DeepSeek" : id.split("/")[0];
-    return { id, label: alias ? `${alias} · ${short}` : `${provider} · ${short}` };
-  });
-  return { primary, items };
-}
-
-function openClawCommand() {
-  const commandPath = path.join(process.env.APPDATA ?? "", "npm", "openclaw.cmd");
-  return fs.existsSync(commandPath) ? commandPath : "openclaw";
-}
-
-function setOpenClawModel(model) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      openClawCommand(),
-      ["models", "set", model],
-      { shell: process.platform === "win32", timeout: 20000, windowsHide: true },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(String(stderr || stdout || error.message).trim()));
-          return;
-        }
-        resolve(String(stdout ?? "").trim());
-      }
-    );
-  });
-}
-
 function setKnowledgeDownloadPaused(paused) {
   if (process.platform !== "win32") return Promise.resolve(false);
   const action = paused ? "Suspend-BitsTransfer" : "Resume-BitsTransfer";
@@ -211,18 +192,17 @@ function readRequestBody(req) {
 }
 
 function readComfyProfile(config) {
-  const raw = config?.plugins?.entries?.comfy?.config;
-  const image = raw?.image;
-  if (!raw || !image) throw new Error("ComfyUI image profile is not configured.");
+  const raw = config?.imageBackend ?? {};
+  const image = raw?.image ?? {};
   return {
     baseUrl: String(raw.baseUrl ?? "http://127.0.0.1:8188").replace(/\/$/, ""),
-    workflowPath: String(image.workflowPath),
-    referenceWorkflowPath: String(image.referenceWorkflowPath ?? "C:\\AI-Apps\\OpenClaw-Workflows\\animagine-reference-api.json"),
+    workflowPath: String(image.workflowPath ?? path.join(appRoot, "workflows", "animagine-text-to-image-api.json")),
+    referenceWorkflowPath: String(image.referenceWorkflowPath ?? path.join(appRoot, "workflows", "animagine-reference-api.json")),
     fluxWorkflowPath: String(image.fluxWorkflowPath ?? path.join(appRoot, "workflows", "flux2-klein-text-api.json")),
     fluxReferenceWorkflowPath: String(image.fluxReferenceWorkflowPath ?? path.join(appRoot, "workflows", "flux2-klein-reference-api.json")),
-    promptNodeId: String(image.promptNodeId),
-    promptInputName: String(image.promptInputName),
-    outputNodeId: String(image.outputNodeId),
+    promptNodeId: String(image.promptNodeId ?? "6"),
+    promptInputName: String(image.promptInputName ?? "text"),
+    outputNodeId: String(image.outputNodeId ?? "9"),
     fluxOutputNodeId: String(image.fluxOutputNodeId ?? "12"),
     referenceImageNodeId: String(image.referenceImageNodeId ?? "12"),
     pollIntervalMs: Number(image.pollIntervalMs ?? 1000),
@@ -1420,19 +1400,6 @@ function gatewayIsAvailable(port) {
   });
 }
 
-function startGateway() {
-  const commandPath = path.join(process.env.APPDATA ?? "", "npm", "openclaw.cmd");
-  const command = fs.existsSync(commandPath) ? commandPath : "openclaw";
-  return new Promise((resolve) => {
-    execFile(
-      command,
-      ["gateway", "start"],
-      { shell: process.platform === "win32", timeout: 20000, windowsHide: true },
-      () => resolve()
-    );
-  });
-}
-
 function startComfyUi() {
   const portableRoot = "C:\\AI-Apps\\ComfyUI_windows_portable";
   const pythonPath = path.join(portableRoot, "python_embeded", "python.exe");
@@ -1478,7 +1445,7 @@ function startNativeImageEngine() {
     NATIVE_IMAGE_PYTHON,
     [nativeImageWorkerPath(), "--server", String(NATIVE_IMAGE_PORT)],
     {
-      cwd: OCU_PROJECT_ROOT,
+      cwd: VELA_PROJECT_ROOT,
       windowsHide: true,
       env: {
         ...process.env,
@@ -1553,40 +1520,6 @@ async function ensureComfyUi() {
   }
 }
 
-async function ensureGateway(port) {
-  if (await gatewayIsAvailable(port)) return;
-  // The Windows scheduled task may already be starting the gateway. Give it a
-  // short grace period before spawning another CLI process, otherwise VELA and
-  // the supervisor race and leave a second high-memory gateway process behind.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (await gatewayIsAvailable(port)) return;
-  }
-  await startGateway();
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (await gatewayIsAvailable(port)) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-}
-
-function findOpenClawControlUi() {
-  const candidates = [
-    path.join(process.env.APPDATA ?? "", "npm", "node_modules", "openclaw", "dist", "control-ui"),
-    path.join(process.env.USERPROFILE ?? "", "AppData", "Roaming", "npm", "node_modules", "openclaw", "dist", "control-ui")
-  ];
-  const root = candidates.find((candidate) => fs.existsSync(path.join(candidate, "assets")));
-  if (!root) {
-    throw new Error("OpenClaw Control UI runtime was not found.");
-  }
-  const assetName = fs
-    .readdirSync(path.join(root, "assets"))
-    .find((name) => /^gateway-[A-Za-z0-9_-]+\.js$/.test(name) && !name.includes("runtime") && !name.includes("scope"));
-  if (!assetName) {
-    throw new Error("OpenClaw Gateway browser client was not found.");
-  }
-  return { root, modulePath: `/vendor/assets/${assetName}` };
-}
-
 function secureHeaders(extra = {}) {
   return {
     "Cache-Control": "no-store",
@@ -1652,7 +1585,9 @@ function streamFile(req, res, filePath, cache = false) {
 }
 
 function requestIsAuthorized(req, url) {
-  return req.headers["x-openclaw-app-key"] === appKey || url.searchParams.get("appKey") === appKey;
+  return req.headers["x-vela-app-key"] === appKey
+    || req.headers["x-openclaw-app-key"] === appKey
+    || url.searchParams.get("appKey") === appKey;
 }
 
 function requestComfyJson(requestPath, timeoutMs = 2500) {
@@ -1688,6 +1623,82 @@ async function readOllamaHealth() {
   }
 }
 
+async function readInstalledOllamaModels() {
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/tags", {
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) throw new Error(`Ollama returned ${response.status}.`);
+    const payload = await response.json();
+    return (Array.isArray(payload?.models) ? payload.models : []).map((item) => ({
+      id: `ollama/${item.name}`,
+      label: `本地 · ${item.name}`,
+      provider: "ollama",
+      installed: true,
+      sizeBytes: Number(item.size || 0)
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function independentModelCatalog() {
+  const config = readModelCenterConfig();
+  const local = await readInstalledOllamaModels();
+  const remote = config.providers.filter((item) => item.enabled).map((item) => ({
+    id: `${item.id}/${item.model}`,
+    label: `${item.label} · ${item.model}`,
+    provider: item.id,
+    installed: true,
+    configured: true
+  }));
+  return {
+    ...publicModelCenterConfig(config),
+    items: [...local, ...remote]
+  };
+}
+
+async function installOllamaModel(model) {
+  if (!/^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$/.test(model)) {
+    throw new Error("Invalid Ollama model name.");
+  }
+  if (modelDownloads.get(model)?.state === "downloading") return;
+  modelDownloads.set(model, { model, state: "downloading", completed: 0, total: 0 });
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, stream: true })
+    });
+    if (!response.ok || !response.body) throw new Error(`Ollama pull failed (${response.status}).`);
+    const decoder = new TextDecoder();
+    let buffered = "";
+    for await (const chunk of response.body) {
+      buffered += decoder.decode(chunk, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const update = JSON.parse(line);
+        modelDownloads.set(model, {
+          model,
+          state: update.status === "success" ? "completed" : "downloading",
+          status: String(update.status || ""),
+          completed: Number(update.completed || 0),
+          total: Number(update.total || 0)
+        });
+      }
+    }
+    modelDownloads.set(model, { ...modelDownloads.get(model), model, state: "completed" });
+  } catch (error) {
+    modelDownloads.set(model, {
+      model,
+      state: "failed",
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 function resourceSnapshot() {
   const totalBytes = os.totalmem();
   const freeBytes = os.freemem();
@@ -1707,13 +1718,14 @@ function resourceSnapshot() {
   return snapshot;
 }
 
-function createServer(openClaw) {
-  const vendor = findOpenClawControlUi();
+function createServer() {
   const allowedMediaExtensions = new Set([
     ".bmp", ".gif", ".jpeg", ".jpg", ".mp3", ".mp4", ".pdf", ".png", ".wav", ".webm", ".webp"
   ]);
   const allowedMediaRoots = [
-    path.join(process.env.USERPROFILE ?? app.getPath("home"), ".openclaw"),
+    app.getPath("userData"),
+    path.join(VELA_PROJECT_ROOT, ".vela"),
+    path.join(VELA_PROJECT_ROOT, ".openclaw"),
     "C:\\AI-Apps",
     "E:\\AI-Models\\Image-Generation"
   ].filter((candidate) => fs.existsSync(candidate));
@@ -1727,9 +1739,8 @@ function createServer(openClaw) {
           return;
         }
         sendJson(res, 200, {
-          gatewayModuleUrl: vendor.modulePath,
-          gatewayUrl: `ws://127.0.0.1:${openClaw.port}`,
-          token: openClaw.token,
+          apiMode: "vela-independent",
+          apiBaseUrl: `http://${APP_HOST}:${OCU_PORT}`,
           version: app.getVersion(),
           release: VELA_RELEASE
         });
@@ -1741,17 +1752,16 @@ function createServer(openClaw) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        const [gateway, ollama, ocu] = await Promise.all([
-          gatewayIsAvailable(openClaw.port),
+        const [ollama, ocu] = await Promise.all([
           readOllamaHealth(),
           gatewayIsAvailable(OCU_PORT)
         ]);
         const nativeImage = nativeImageEngineAvailable();
         sendJson(res, 200, {
-          ok: gateway && nativeImage && ollama.state === "online",
+          ok: ocu && nativeImage,
           release: VELA_RELEASE,
           services: {
-            gateway: { state: gateway ? "online" : "offline", port: openClaw.port },
+            agent: { state: ocu ? "online" : "offline", port: OCU_PORT, backend: "vela" },
             comfy: { state: nativeImage ? "online" : "offline", port: null, backend: "vela-native" },
             ollama: { state: ollama.state, models: ollama.count, port: 11434 },
             ocu: { state: ocu ? "online" : "offline", port: OCU_PORT }
@@ -1774,8 +1784,51 @@ function createServer(openClaw) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        const config = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
-        sendJson(res, 200, modelCatalog(config));
+        sendJson(res, 200, await independentModelCatalog());
+        return;
+      }
+
+      if (url.pathname === "/api/models/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        const model = String(payload?.model || "").trim();
+        void installOllamaModel(model);
+        sendJson(res, 202, { ok: true, model, state: "downloading" });
+        return;
+      }
+
+      if (url.pathname === "/api/models/downloads" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, { downloads: [...modelDownloads.values()] });
+        return;
+      }
+
+      if (url.pathname === "/api/providers" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        const config = readModelCenterConfig();
+        const provider = {
+          id: String(payload.id || "").trim(),
+          label: String(payload.label || payload.id || "").trim(),
+          baseUrl: String(payload.baseUrl || "").trim(),
+          model: String(payload.model || "").trim(),
+          encryptedApiKey: payload.apiKey
+            ? encryptApiKey(String(payload.apiKey))
+            : config.providers.find((item) => item.id === payload.id)?.encryptedApiKey || "",
+          enabled: payload.enabled !== false
+        };
+        config.providers = [...config.providers.filter((item) => item.id !== provider.id), provider];
+        const saved = saveModelCenterConfig(modelCenterConfigPath(), config);
+        sendJson(res, 200, publicModelCenterConfig(saved));
         return;
       }
 
@@ -1809,11 +1862,10 @@ function createServer(openClaw) {
           const spec = analyzeImageRequest(prompt, settings, attachments);
           const knownCharacterCount = Array.isArray(spec.knownCharacters) ? spec.knownCharacters.length : 0;
           if (knownCharacterCount > 1) {
-            const config = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
             sendJson(
               res,
               200,
-              await generateVerifiedMultiCharacterImage(config, prompt, settings, attachments, spec)
+              await generateNativeImage(prompt, settings, attachments)
             );
           } else {
             sendJson(res, 200, await generateNativeImage(prompt, settings, attachments));
@@ -1840,16 +1892,59 @@ function createServer(openClaw) {
         }
         const payload = JSON.parse(await readRequestBody(req));
         const model = typeof payload?.model === "string" ? payload.model.trim() : "";
-        const config = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
-        const catalog = modelCatalog(config);
+        const catalog = await independentModelCatalog();
         const selected = catalog.items.find((item) => item.id === model);
         if (!selected) {
           sendJson(res, 400, { error: "Model is not configured for VELA." });
           return;
         }
-        await setOpenClawModel(selected.id);
-        const refreshed = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
-        sendJson(res, 200, { primary: modelCatalog(refreshed).primary, label: selected.label });
+        const config = readModelCenterConfig();
+        config.primary = selected.id;
+        saveModelCenterConfig(modelCenterConfigPath(), config);
+        await restartOcuApi();
+        sendJson(res, 200, { primary: selected.id, label: selected.label });
+        return;
+      }
+
+      if (url.pathname === "/api/chat" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        sendJson(res, 200, (await requestOcuJson("/v1/chat", "POST", payload, 900000)).data);
+        return;
+      }
+
+      if (url.pathname === "/api/sessions" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, (await requestOcuJson("/v1/sessions", "GET", null, 10000)).data);
+        return;
+      }
+
+      if (url.pathname === "/api/sessions" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        sendJson(res, 200, (await requestOcuJson("/v1/sessions", "POST", payload, 10000)).data);
+        return;
+      }
+
+      const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(messages|delete)$/);
+      if (sessionMatch) {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const [, sessionId, operation] = sessionMatch;
+        const method = operation === "delete" ? "DELETE" : "GET";
+        const target = `/v1/sessions/${encodeURIComponent(sessionId)}/${operation}`;
+        sendJson(res, 200, (await requestOcuJson(target, method, null, 10000)).data);
         return;
       }
 
@@ -1947,16 +2042,6 @@ function createServer(openClaw) {
           return;
         }
         streamFile(req, res, resolved);
-        return;
-      }
-
-      if (url.pathname.startsWith("/vendor/")) {
-        const vendorPath = safeStaticPath(vendor.root, url.pathname.slice("/vendor/".length));
-        if (!vendorPath) {
-          sendJson(res, 403, { error: "Forbidden" });
-          return;
-        }
-        streamFile(req, res, vendorPath, true);
         return;
       }
 
@@ -2087,22 +2172,33 @@ function requestOcuJson(requestPath, method = "GET", payload = null, timeoutMs =
           try {
             parsed = JSON.parse(raw);
           } catch (error) {
-            reject(new Error(`OpenClaw-Ultimate API returned invalid JSON (${response.statusCode}).`));
+            reject(new Error(`VELA API returned invalid JSON (${response.statusCode}).`));
             return;
           }
           if ((response.statusCode ?? 500) >= 400) {
-            reject(new Error(parsed?.error?.message ?? `OpenClaw-Ultimate API failed (${response.statusCode}).`));
+            reject(new Error(parsed?.error?.message ?? `VELA API failed (${response.statusCode}).`));
             return;
           }
           resolve(parsed);
         });
       }
     );
-    request.once("timeout", () => request.destroy(new Error("OpenClaw-Ultimate API timed out")));
+    request.once("timeout", () => request.destroy(new Error("VELA API timed out")));
     request.once("error", reject);
     if (body) request.write(body);
     request.end();
   });
+}
+
+async function restartOcuApi() {
+  if (ocuProcess && ocuProcess.exitCode === null) {
+    const processToStop = ocuProcess;
+    const stopped = new Promise((resolve) => processToStop.once("exit", resolve));
+    processToStop.kill();
+    await Promise.race([stopped, new Promise((resolve) => setTimeout(resolve, 3000))]);
+  }
+  ocuProcess = null;
+  return ensureOcuApi();
 }
 
 async function ensureOcuApi() {
@@ -2119,7 +2215,7 @@ async function ensureOcuApi() {
       // Start the project's local API only when it is not already available.
     }
 
-    const projectFile = path.join(OCU_PROJECT_ROOT, "pyproject.toml");
+    const projectFile = path.join(VELA_PROJECT_ROOT, "pyproject.toml");
     if (!fs.existsSync(projectFile)) return false;
     if (!ocuProcess || ocuProcess.exitCode !== null) {
       try {
@@ -2131,11 +2227,20 @@ async function ensureOcuApi() {
         const uvCommand = uvCandidates.find((candidate) => candidate === "uv" || fs.existsSync(candidate)) ?? "uv";
         ocuProcess = spawn(
           uvCommand,
-          ["run", "--no-sync", "--project", OCU_PROJECT_ROOT, "ocu", "serve", "--host", APP_HOST, "--port", String(OCU_PORT)],
+          ["run", "--no-dev", "--project", VELA_PROJECT_ROOT, "vela", "serve", "--host", APP_HOST, "--port", String(OCU_PORT)],
           {
-            cwd: OCU_PROJECT_ROOT,
+            cwd: VELA_PROJECT_ROOT,
             windowsHide: true,
-            stdio: "ignore"
+            stdio: "ignore",
+            env: {
+              ...process.env,
+              ...modelRuntimeEnvironment(readModelCenterConfig(), decryptApiKey),
+              OCU_OPENCLAW_ENABLED: "false",
+              OCU_SESSION_DB_PATH: path.join(app.getPath("userData"), "sessions.db"),
+              OCU_MEMORY_DB_PATH: path.join(app.getPath("userData"), "memory.db"),
+              OCU_PLANNER_DB_PATH: path.join(app.getPath("userData"), "plans.db"),
+              OCU_GOVERNANCE_DB_PATH: path.join(app.getPath("userData"), "governance.db")
+            }
           }
         );
         ocuProcess.once("error", () => {
@@ -2152,12 +2257,8 @@ async function ensureOcuApi() {
 
     const deadline = Date.now() + 12000;
     while (Date.now() < deadline) {
-      try {
-        await requestOcuJson("/v1/status", "GET", null, 1500);
-        return true;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 350));
-      }
+      if (await gatewayIsAvailable(OCU_PORT)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 350));
     }
     return false;
   })();
@@ -2185,9 +2286,10 @@ if (!hasLock) {
 
   app.whenReady().then(async () => {
     try {
-      const openClaw = readOpenClawConfig();
-      await ensureGateway(openClaw.port);
-      server = createServer(openClaw);
+      if (!await ensureOcuApi()) {
+        throw new Error("VELA Agent Runtime could not start.");
+      }
+      server = createServer();
       server.on("error", (error) => {
         console.error(error);
         // A stale or already-running desktop process can briefly retain the

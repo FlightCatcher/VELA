@@ -100,6 +100,7 @@
                 <option value="" data-i18n="modelLoading">正在读取模型</option>
               </select>
             </label>
+            <button class="text-button" id="model-center-button" type="button">模型中心</button>
             <div class="privacy-badge">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 10V7a4 4 0 0 1 8 0v3M6 10h12v10H6z" />
@@ -301,7 +302,7 @@
               </div>
             </div>
           </div>
-          <p class="composer-note" data-i18n="modelNote">DeepSeek 主模型 · OpenClaw 本地执行引擎</p>
+          <p class="composer-note" data-i18n="modelNote">当前模型 · VELA 独立执行引擎</p>
         </section>
       </main>
 
@@ -317,6 +318,22 @@
       <dialog class="media-dialog" id="media-dialog">
         <button class="media-dialog__close" id="media-close" type="button" aria-label="Close">×</button>
         <img id="media-dialog-image" alt="" />
+      </dialog>
+
+      <dialog class="model-center" id="model-center-dialog">
+        <div class="model-center__header">
+          <div><span>VELA</span><h2>模型中心</h2><p>本地模型一键安装，API 模型安全接入。</p></div>
+          <button class="media-dialog__close" id="model-center-close" type="button">×</button>
+        </div>
+        <section><h3>推荐本地模型</h3><div class="model-center__grid" id="recommended-models"></div></section>
+        <section><h3>API 模型</h3><form class="provider-form" id="provider-form">
+          <select id="provider-template"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI Compatible</option><option value="custom">自定义</option></select>
+          <input id="provider-label" placeholder="显示名称" required />
+          <input id="provider-base-url" placeholder="API Base URL" required />
+          <input id="provider-model" placeholder="模型名称" required />
+          <input id="provider-api-key" type="password" placeholder="API Key（由 Windows 加密保存）" />
+          <button type="submit">保存并接入</button>
+        </form></section>
       </dialog>
 
       <input

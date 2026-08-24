@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """OpenClaw-Ultimate 全局配置。"""
+    """VELA 全局配置。"""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     max_steps: int = 8
 
     system_prompt: str = (
-        "你是 VELA（维澜），一个由 OpenClaw-Ultimate 提供兼容层的本地 AI 助手。"
+        "你是 VELA（维澜），一个独立、本地优先、可验证的 AI Agent。"
         "请使用准确、清晰的中文回答。"
         "当存在合适工具时，应优先使用工具获得可靠结果。"
     )
@@ -45,23 +45,23 @@ class Settings(BaseSettings):
     shell_timeout: float = 30.0
     shell_max_output_characters: int = 20_000
 
-    session_db_path: Path = Path(".openclaw/sessions.db")
+    session_db_path: Path = Path(".vela/sessions.db")
     history_message_limit: int = 100
 
     context_token_budget: int = 8192
     context_response_reserve: int = 2048
 
     memory_enabled: bool = True
-    memory_db_path: Path = Path(".openclaw/memory.db")
+    memory_db_path: Path = Path(".vela/memory.db")
     embedding_model: str = "qwen3-embedding:0.6b"
     memory_recall_limit: int = 5
     memory_similarity_threshold: float = 0.35
     memory_max_context_characters: int = 2000
 
-    planner_db_path: Path = Path(".openclaw/plans.db")
+    planner_db_path: Path = Path(".vela/plans.db")
     planner_max_steps: int = 12
 
-    openclaw_enabled: bool = True
+    openclaw_enabled: bool = False
     openclaw_cli_command: str = "openclaw"
     openclaw_gateway_url: str = "http://127.0.0.1:18789"
     openclaw_agent_id: str = "main"
@@ -109,7 +109,7 @@ class Settings(BaseSettings):
 
     knowledge_enabled: bool = True
     knowledge_root: Path = Path("E:/OpenClaw-Knowledge/library")
-    knowledge_db_path: Path = Path(".openclaw/knowledge.db")
+    knowledge_db_path: Path = Path(".vela/knowledge.db")
     knowledge_chunk_characters: int = 1200
     knowledge_chunk_overlap: int = 200
     knowledge_max_file_bytes: int = 1_000_000
@@ -164,7 +164,7 @@ class Settings(BaseSettings):
     api_port: int = 8765
     api_allow_remote: bool = False
     api_max_body_bytes: int = 1_000_000
-    governance_db_path: Path = Path(".openclaw/governance.db")
+    governance_db_path: Path = Path(".vela/governance.db")
 
     @property
     def openai_base_url(self) -> str:

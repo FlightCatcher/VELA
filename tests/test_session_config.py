@@ -11,7 +11,7 @@ from openclaw_ultimate.config import Settings
 def test_session_settings_defaults() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.session_db_path == Path(".openclaw/sessions.db")
+    assert settings.session_db_path == Path(".vela/sessions.db")
     assert settings.history_message_limit == 100
 
 
