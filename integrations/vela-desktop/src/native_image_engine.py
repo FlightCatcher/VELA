@@ -18,26 +18,27 @@ import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-PACKAGE_ROOT = Path(r"D:\AI-Models-HotCache\VELA-ImageEngine\python_packages")
+ENGINE_ROOT = Path(os.environ.get("VELA_IMAGE_ENGINE_ROOT", str(Path.home() / "VELA" / "ImageEngine")))
+PACKAGE_ROOT = ENGINE_ROOT / "python_packages"
 if PACKAGE_ROOT.exists():
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-os.environ.setdefault("HF_HOME", r"D:\AI-Models-HotCache\VELA-ImageEngine\cache")
-os.environ.setdefault("HF_HUB_CACHE", r"D:\AI-Models-HotCache\VELA-ImageEngine\cache\hub")
-os.environ.setdefault("TRANSFORMERS_CACHE", r"D:\AI-Models-HotCache\VELA-ImageEngine\cache\transformers")
+os.environ.setdefault("HF_HOME", str(ENGINE_ROOT / "cache"))
+os.environ.setdefault("HF_HUB_CACHE", str(ENGINE_ROOT / "cache" / "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str(ENGINE_ROOT / "cache" / "transformers"))
 
 import torch
 from diffusers import StableDiffusionXLImg2ImgPipeline, StableDiffusionXLPipeline
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 
-MODEL_ROOT = Path(r"D:\AI-Models-HotCache\Models\checkpoints")
-OUTPUT_ROOT = Path(r"E:\AI-Models\Image-Generation\Outputs\VELA-Native")
+MODEL_ROOT = Path(os.environ.get("VELA_MODEL_ROOT", str(Path.home() / "VELA" / "Models"))) / "checkpoints"
+OUTPUT_ROOT = Path(os.environ.get("VELA_IMAGE_OUTPUT_ROOT", str(Path.home() / "VELA" / "Outputs"))) / "VELA-Native"
 MODELS = {
     # The previous "opt" checkpoint produced corrupted abstract color blocks
     # under Diffusers. Use the verified original checkpoint instead.
     "anime": MODEL_ROOT / "animagine-xl-4.0.safetensors",
-    "realistic": MODEL_ROOT / "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors",
+    "realistic": MODEL_ROOT / "RealVisXL_V5.0_fp16.safetensors",
     "ssd1b": MODEL_ROOT / "SSD-1B-A1111.safetensors",
 }
 _PIPELINE: StableDiffusionXLPipeline | None = None

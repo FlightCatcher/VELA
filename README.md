@@ -19,7 +19,12 @@ VELA 是一个可独立运行的桌面 AI Agent。它拥有对话、任务规划
 
 ## 一键安装（Windows）
 
-需要 Windows 11、Python 3.12、uv、Node.js 20+。首次从源码安装：
+普通用户从 GitHub Releases 下载 `VELA-Setup-<版本>.exe`，按向导安装即可。
+无需预先安装 Python、Node.js、uv 或 Ollama。首次启动时 VELA 会打开恢复界面、
+准备独立 Agent Runtime，并引导选择模型与数据目录。卸载应用不会删除会话、模型
+或生成结果。
+
+开发者从源码安装：
 
 ```powershell
 git clone https://github.com/FlightCatcher/VELA.git
@@ -39,6 +44,9 @@ Windows 用户数据目录，不写入 Git 仓库。
 - 选择已安装的 Ollama 模型并立即切换
 - 添加 DeepSeek、OpenAI Compatible 或其他兼容 API
 - API Key 不写入项目文件，使用系统安全存储加密
+- 自动识别生图模型，并把缺失资源安装到用户选择的数据盘
+- 下载支持进度、断点续传、取消、磁盘空间检查和已发布哈希校验
+- 模型、缓存、输出和运行时目录可在界面中更改
 
 VELA 默认推荐 `qwen3:8b` 作为综合 Agent 模型；低内存环境可使用 `qwen3:4b`。
 

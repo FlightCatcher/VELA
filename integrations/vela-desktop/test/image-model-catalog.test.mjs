@@ -4,18 +4,18 @@ import test from "node:test";
 import { imageModelCatalog, imageModelInstallAssets } from "../src/image-model-catalog.mjs";
 
 test("image model catalog exposes VELA image engines", () => {
-  const catalog = imageModelCatalog();
+  const catalog = imageModelCatalog("D:\\VELA\\Models");
   assert.deepEqual(catalog.map((item) => item.id), ["anime", "realistic", "ssd1b", "flux2"]);
   assert.ok(catalog.every((item) => Array.isArray(item.files) && item.files.length > 0));
 });
 
 test("one-click image model assets stay on the external model drive", () => {
-  for (const asset of imageModelInstallAssets("anime")) {
-    assert.match(asset.path, /^D:\\AI-Models-HotCache\\/);
+  for (const asset of imageModelInstallAssets("anime", "D:\\VELA\\Models")) {
+    assert.match(asset.path, /^D:\\VELA\\Models\\/);
     assert.match(asset.url, /^https:\/\/huggingface\.co\//);
   }
 });
 
 test("incomplete bundles cannot pretend to support one-click install", () => {
-  assert.throws(() => imageModelInstallAssets("flux2"), /cannot be installed automatically/i);
+  assert.throws(() => imageModelInstallAssets("flux2", "D:\\VELA\\Models"), /cannot be installed automatically/i);
 });

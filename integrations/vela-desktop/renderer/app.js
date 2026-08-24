@@ -15,8 +15,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.2 · 就绪",
-    healthDegraded: "VELA 2.2 · 部分服务离线",
+    healthReady: "VELA 2.3 · 就绪",
+    healthDegraded: "VELA 2.3 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -146,8 +146,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.2 · Ready",
-    healthDegraded: "VELA 2.2 · Degraded",
+    healthReady: "VELA 2.3 · Ready",
+    healthDegraded: "VELA 2.3 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -293,6 +293,11 @@ const els = {
   mediaClose: document.querySelector("#media-close"),
   mediaDialog: document.querySelector("#media-dialog"),
   mediaDialogImage: document.querySelector("#media-dialog-image"),
+  onboardingDialog: document.querySelector("#onboarding-dialog"),
+  onboardingStorage: document.querySelector("#onboarding-storage"),
+  onboardingModels: document.querySelector("#onboarding-models"),
+  onboardingFinish: document.querySelector("#onboarding-finish"),
+  onboardingSkip: document.querySelector("#onboarding-skip"),
   modelSelect: document.querySelector("#model-select"),
   modelCenterButton: document.querySelector("#model-center-button"),
   modelCenterDialog: document.querySelector("#model-center-dialog"),
@@ -301,7 +306,11 @@ const els = {
   directModels: document.querySelector("#direct-models"),
   imageModels: document.querySelector("#image-models"),
   modelCenterSummary: document.querySelector("#model-center-summary"),
+  modelStoragePath: document.querySelector("#model-storage-path"),
+  modelStorageSelect: document.querySelector("#model-storage-select"),
+  appUpdateButton: document.querySelector("#app-update-button"),
   directRuntimeInstall: document.querySelector("#direct-runtime-install"),
+  imageRuntimeInstall: document.querySelector("#image-runtime-install"),
   providerForm: document.querySelector("#provider-form"),
   providerTemplate: document.querySelector("#provider-template"),
   providerLabel: document.querySelector("#provider-label"),
@@ -1469,6 +1478,11 @@ function renderModelCenter() {
     const localChat = (state.models.items || []).filter((item) => ["ollama", "direct"].includes(item.provider)).length;
     els.modelCenterSummary.innerHTML = `<div><strong>${localChat}</strong><span>本地对话模型</span></div><div><strong>${readyImages}/${imageModels.length}</strong><span>生图模型已就绪</span></div><div><strong>${state.models.directRuntime?.installed ? "就绪" : "未安装"}</strong><span>直连引擎</span></div>`;
   }
+  if (els.modelStoragePath) els.modelStoragePath.textContent = state.models.storage?.dataRoot || "尚未配置";
+  if (els.imageRuntimeInstall) {
+    els.imageRuntimeInstall.textContent = state.models.imageRuntime?.installed ? "生图引擎已就绪" : "一键准备生图引擎";
+    els.imageRuntimeInstall.disabled = Boolean(state.models.imageRuntime?.installed);
+  }
 }
 
 async function installImageModel(model) {
@@ -2203,6 +2217,51 @@ els.modelCenterButton?.addEventListener("click", () => {
   els.modelCenterDialog?.showModal();
 });
 els.modelCenterClose?.addEventListener("click", () => els.modelCenterDialog?.close());
+els.onboardingStorage?.addEventListener("click", () => els.modelStorageSelect?.click());
+els.onboardingModels?.addEventListener("click", () => {
+  els.onboardingDialog?.close();
+  renderModelCenter();
+  els.modelCenterDialog?.showModal();
+});
+for (const button of [els.onboardingFinish, els.onboardingSkip]) {
+  button?.addEventListener("click", () => {
+    localStorage.setItem("vela.desktop.onboarding", "complete");
+    els.onboardingDialog?.close();
+    if (button === els.onboardingFinish) void refreshWorkspace();
+  });
+}
+els.modelStorageSelect?.addEventListener("click", async () => {
+  els.modelStorageSelect.disabled = true;
+  try {
+    const response = await fetch("/api/storage/select", { method: "POST", headers: { "X-Vela-App-Key": appKey } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "无法更改数据目录");
+    if (!payload.canceled) {
+      toast("数据目录已更新，重启 VELA 后全部组件将使用新目录");
+      await loadModels();
+    }
+  } catch (error) {
+    toast(String(error));
+  } finally {
+    els.modelStorageSelect.disabled = false;
+  }
+});
+els.appUpdateButton?.addEventListener("click", async () => {
+  els.appUpdateButton.disabled = true;
+  try {
+    const statusResponse = await fetch("/api/update", { headers: { "X-Vela-App-Key": appKey } });
+    const status = await statusResponse.json();
+    const endpoint = status.state === "available" ? "/api/update/download" : "/api/update/check";
+    const response = await fetch(endpoint, { method: "POST", headers: { "X-Vela-App-Key": appKey } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "更新检查失败");
+    toast(endpoint.endsWith("download") ? "正在后台下载更新" : "正在检查新版本");
+  } catch (error) {
+    toast(String(error));
+  } finally {
+    window.setTimeout(() => { els.appUpdateButton.disabled = false; }, 1500);
+  }
+});
 els.modelCenterDialog?.addEventListener("click", (event) => {
   const tab = event.target.closest("[data-model-tab]");
   if (tab) {
@@ -2242,6 +2301,19 @@ els.directRuntimeInstall?.addEventListener("click", () => {
     els.directRuntimeInstall.disabled = false;
     toast(String(error));
   });
+});
+els.imageRuntimeInstall?.addEventListener("click", async () => {
+  els.imageRuntimeInstall.disabled = true;
+  try {
+    const response = await fetch("/api/image-runtime/install", { method: "POST", headers: { "X-Vela-App-Key": appKey } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "生图引擎准备失败");
+    toast("正在模型盘准备生图运行环境，这可能需要一些时间");
+    window.setTimeout(() => void refreshModelDownloads(), 1500);
+  } catch (error) {
+    els.imageRuntimeInstall.disabled = false;
+    toast(String(error));
+  }
 });
 els.directModels?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-select-direct]");
@@ -2353,3 +2425,6 @@ renderAll(true);
 autoResizeComposer();
 void connectVela();
 void loadModels();
+if (!localStorage.getItem("vela.desktop.onboarding")) {
+  window.setTimeout(() => els.onboardingDialog?.showModal(), 650);
+}

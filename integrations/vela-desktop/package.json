@@ -1,17 +1,20 @@
 {
   "name": "vela-desktop",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "VELA independent local-first AI agent desktop.",
+  "author": "FlightCatcher",
+  "repository": "https://github.com/FlightCatcher/VELA",
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win portable --x64",
+    "build": "electron-builder --win nsis portable --x64",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "dompurify": "3.4.12",
+    "dompurify": "^3.4.14",
+    "electron-updater": "^6.8.9",
     "marked": "18.0.7"
   },
   "devDependencies": {
@@ -64,9 +67,20 @@
         "to": "agent/README.md"
       }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "FlightCatcher",
+      "repo": "VELA"
+    },
     "win": {
       "icon": "build/vela-icon.ico",
       "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
         {
           "target": "portable",
           "arch": [
@@ -74,6 +88,14 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "VELA-Setup-${version}.exe"
     },
     "portable": {
       "artifactName": "VELA-Desktop.exe"

@@ -1,8 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const HOT_ROOT = "D:\\AI-Models-HotCache\\Models";
-
 export const IMAGE_MODEL_CATALOG = Object.freeze([
   {
     id: "anime",
@@ -12,18 +10,23 @@ export const IMAGE_MODEL_CATALOG = Object.freeze([
     engine: "native",
     recommended: true,
     assets: [{
-      path: path.join(HOT_ROOT, "checkpoints", "animagine-xl-4.0.safetensors"),
-      url: "https://huggingface.co/cagliostrolab/animagine-xl-4.0/resolve/main/animagine-xl-4.0.safetensors?download=true"
+      relativePath: path.join("checkpoints", "animagine-xl-4.0.safetensors"),
+      url: "https://huggingface.co/cagliostrolab/animagine-xl-4.0/resolve/main/animagine-xl-4.0.safetensors?download=true",
+      sha256: "1d5b43ff75b6ab598502d4c779d2fbfa3dceca51c60c3b609640a60772333916"
     }]
   },
   {
     id: "realistic",
-    label: "Juggernaut XL v9",
+    label: "RealVisXL V5.0",
     description: "真实摄影、人像与电影感",
     tags: ["写实", "人像", "摄影"],
     engine: "native",
     recommended: true,
-    assets: [{ path: path.join(HOT_ROOT, "checkpoints", "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors") }]
+    assets: [{
+      relativePath: path.join("checkpoints", "RealVisXL_V5.0_fp16.safetensors"),
+      url: "https://huggingface.co/SG161222/RealVisXL_V5.0/resolve/main/RealVisXL_V5.0_fp16.safetensors?download=true",
+      sha256: "6a35a7855770ae9820a3c931d4964c3817b6d9e3c6f9c4dabb5b3a94e5643b80"
+    }]
   },
   {
     id: "ssd1b",
@@ -33,8 +36,9 @@ export const IMAGE_MODEL_CATALOG = Object.freeze([
     engine: "native",
     recommended: true,
     assets: [{
-      path: path.join(HOT_ROOT, "checkpoints", "SSD-1B-A1111.safetensors"),
-      url: "https://huggingface.co/segmind/SSD-1B/resolve/main/SSD-1B-A1111.safetensors?download=true"
+      relativePath: path.join("checkpoints", "SSD-1B-A1111.safetensors"),
+      url: "https://huggingface.co/segmind/SSD-1B/resolve/main/SSD-1B-A1111.safetensors?download=true",
+      sha256: "1895a00bfc769a00b0c0c43a95e433e79e9db8a85402b45a33e8448785bde94d"
     }]
   },
   {
@@ -45,19 +49,19 @@ export const IMAGE_MODEL_CATALOG = Object.freeze([
     engine: "comfy",
     recommended: false,
     assets: [
-      { path: path.join(HOT_ROOT, "diffusion_models", "flux-2-klein-4b-fp8.safetensors") },
-      { path: path.join(HOT_ROOT, "text_encoders", "qwen_3_4b.safetensors") },
-      { path: path.join(HOT_ROOT, "vae", "flux2-vae.safetensors") }
+      { relativePath: path.join("diffusion_models", "flux-2-klein-4b-fp8.safetensors") },
+      { relativePath: path.join("text_encoders", "qwen_3_4b.safetensors") },
+      { relativePath: path.join("vae", "flux2-vae.safetensors") }
     ]
   }
 ]);
 
-export function imageModelCatalog() {
+export function imageModelCatalog(modelsRoot) {
   return IMAGE_MODEL_CATALOG.map((model) => {
     const files = model.assets.map((asset) => ({
-      path: asset.path,
-      installed: fs.existsSync(asset.path),
-      sizeBytes: fileSize(asset.path)
+      path: path.join(modelsRoot, asset.relativePath),
+      installed: fs.existsSync(path.join(modelsRoot, asset.relativePath)),
+      sizeBytes: fileSize(path.join(modelsRoot, asset.relativePath))
     }));
     const installed = files.every((file) => file.installed);
     return {
@@ -75,13 +79,13 @@ export function imageModelCatalog() {
   });
 }
 
-export function imageModelInstallAssets(modelId) {
+export function imageModelInstallAssets(modelId, modelsRoot) {
   const model = IMAGE_MODEL_CATALOG.find((item) => item.id === modelId);
   if (!model) throw new Error("Unknown image model.");
   if (!model.assets.every((asset) => Boolean(asset.url))) {
     throw new Error("This model bundle cannot be installed automatically yet.");
   }
-  return model.assets;
+  return model.assets.map((asset) => ({ ...asset, path: path.join(modelsRoot, asset.relativePath) }));
 }
 
 function fileSize(filePath) {

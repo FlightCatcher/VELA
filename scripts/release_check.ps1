@@ -34,4 +34,17 @@ if ($LASTEXITCODE -ne 0) { throw "VELA Desktop tests failed." }
 & npm --prefix $desktopRoot audit --omit=dev
 if ($LASTEXITCODE -ne 0) { throw "VELA Desktop production dependency audit failed." }
 
-Write-Host "[OK] VELA v1.1 release checks passed."
+& node --check (Join-Path $desktopRoot "src\main.mjs")
+if ($LASTEXITCODE -ne 0) { throw "VELA Desktop main process syntax check failed." }
+
+& node --check (Join-Path $desktopRoot "renderer\app.js")
+if ($LASTEXITCODE -ne 0) { throw "VELA Desktop renderer syntax check failed." }
+
+$secretPatterns = @("eyJ[a-zA-Z0-9_-]{20,}", "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----")
+foreach ($pattern in $secretPatterns) {
+    $matches = & rg -n -g '!**/dist/**' -g '!**/.venv/**' -g '!uv.lock' -g '!package-lock.json' -- $pattern $resolvedRoot
+    if ($LASTEXITCODE -eq 0 -and $matches) { throw "Potential committed secret detected: $pattern" }
+    if ($LASTEXITCODE -gt 1) { throw "Secret scan failed for pattern: $pattern" }
+}
+
+Write-Host "[OK] VELA public release checks passed."

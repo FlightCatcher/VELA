@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-            <small>VELA 2.2 · LOCAL INTELLIGENCE</small>
+            <small>VELA 2.3 · LOCAL INTELLIGENCE</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.2 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.3 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -320,12 +320,26 @@
         <img id="media-dialog-image" alt="" />
       </dialog>
 
+      <dialog class="onboarding" id="onboarding-dialog">
+        <div class="onboarding__mark">V</div>
+        <span>WELCOME TO VELA</span>
+        <h2>把目标交给 VELA</h2>
+        <p>选择数据盘，然后接入本地模型或云端 API。无需理解复杂的运行环境。</p>
+        <div class="onboarding__steps">
+          <article><strong>1</strong><div><b>选择数据目录</b><small>模型、缓存和输出可放在非系统盘。</small></div><button id="onboarding-storage" type="button">选择</button></article>
+          <article><strong>2</strong><div><b>配置智能模型</b><small>本地运行更私密，API 响应更快。</small></div><button id="onboarding-models" type="button">打开模型中心</button></article>
+          <article><strong>3</strong><div><b>运行自动检查</b><small>VELA 会检查 Agent、模型与生图能力。</small></div><button id="onboarding-finish" type="button">开始使用</button></article>
+        </div>
+        <button class="onboarding__skip" id="onboarding-skip" type="button">稍后设置</button>
+      </dialog>
+
       <dialog class="model-center" id="model-center-dialog">
         <div class="model-center__header">
           <div><span>VELA MODEL LIBRARY</span><h2>模型中心</h2><p>发现、安装并切换 VELA 的对话与生图能力。</p></div>
           <button class="model-center__close" id="model-center-close" type="button" aria-label="关闭">×</button>
         </div>
         <div class="model-center__summary" id="model-center-summary"></div>
+        <div class="model-center__storage"><div><span>模型与数据目录</span><strong id="model-storage-path">正在读取…</strong></div><div class="model-center__storage-actions"><button id="app-update-button" type="button">检查更新</button><button id="model-storage-select" type="button">更改目录</button></div></div>
         <nav class="model-center__tabs" aria-label="模型类型">
           <button class="is-active" type="button" data-model-tab="chat">对话模型</button>
           <button type="button" data-model-tab="image">生图模型</button>
@@ -339,7 +353,7 @@
             <div class="model-center__grid" id="direct-models"></div>
           </section>
           <section class="model-center__panel" data-model-panel="image">
-            <div class="model-section-title"><div><h3>本地生图引擎</h3><p>自动扫描 D/E 盘资源；已安装模型可直接切换到生图工作室。</p></div></div>
+            <div class="model-section-title"><div><h3>本地生图引擎</h3><p>自动扫描模型盘；已安装模型可直接切换到生图工作室。</p></div><button id="image-runtime-install" type="button">准备生图引擎</button></div>
             <div class="model-center__grid" id="image-models"></div>
           </section>
           <section class="model-center__panel" data-model-panel="api">

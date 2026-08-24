@@ -1,5 +1,16 @@
 # Changelog
 
+## VELA 2.3.0 — public-ready foundation - 2026-08-24
+
+- Added first-run onboarding and a recovery-capable startup that remains usable while the Agent runtime is prepared.
+- Replaced machine-specific model paths with a user-selectable data root and automatic legacy-library migration.
+- Added managed uv/Python preparation so ordinary users do not need a development environment.
+- Added one-click native image runtime preparation and verified downloads for Animagine, RealVisXL, and SSD-1B.
+- Added resumable model downloads, cancellation, free-space checks, and SHA-256 validation where publishers provide hashes.
+- Added NSIS installation, uninstall data retention, GitHub update metadata, and in-app update checks.
+- Added public security, privacy, and clean-machine release documentation.
+- Removed known production dependency vulnerabilities.
+
 ## VELA 2.2.0 — unified model library - 2026-08-24
 
 - Rebuilt Model Center around clear Chat, Image, and API sections.

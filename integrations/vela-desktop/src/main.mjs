@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, safeStorage, shell } from "electron";
+import updaterPackage from "electron-updater";
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -31,21 +32,16 @@ import {
   findLlamaServer
 } from "./direct-model-runtime.mjs";
 import { imageModelCatalog, imageModelInstallAssets } from "./image-model-catalog.mjs";
+import { ensureStorageDirectories, loadStorageConfig, saveStorageConfig } from "./storage-config.mjs";
+
+const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.2.0";
+const VELA_RELEASE = "2.3.0";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
-const NATIVE_IMAGE_PYTHON = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\runtime\\python.exe";
-const NATIVE_IMAGE_PACKAGES = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\python_packages";
 const OCU_PORT = 8765;
-const COMFY_INPUT_ROOT = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\input";
-const COMFY_UPSCALE_ROOT = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\models\\upscale_models";
-const COMFY_OUTPUT_ROOT = fs.existsSync("E:\\AI-Models\\Image-Generation")
-  ? "E:\\AI-Models\\Image-Generation\\Outputs"
-  : path.join(app.getPath("userData"), "media", "images");
-const CHARACTER_MEMORY_ROOT = "E:\\AI-Models\\Image-Generation\\Character-Memory";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
 const VELA_PROJECT_ROOT = process.env.VELA_PROJECT_ROOT
@@ -56,7 +52,55 @@ const appKey = !app.isPackaged && process.env.VELA_E2E_APP_KEY?.trim()
   ? process.env.VELA_E2E_APP_KEY.trim()
   : crypto.randomBytes(24).toString("hex");
 const modelDownloads = new Map();
-const DIRECT_RUNTIME_ROOT = "E:\\AI-Models\\Runtimes\\llama.cpp";
+const modelDownloadControllers = new Map();
+let updateState = { state: "idle", version: VELA_RELEASE, progress: 0, error: "" };
+
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.on("checking-for-update", () => { updateState = { ...updateState, state: "checking", error: "" }; });
+autoUpdater.on("update-available", (info) => { updateState = { ...updateState, state: "available", version: info.version, error: "" }; });
+autoUpdater.on("update-not-available", () => { updateState = { ...updateState, state: "current", version: VELA_RELEASE, error: "" }; });
+autoUpdater.on("download-progress", (progress) => { updateState = { ...updateState, state: "downloading", progress: Number(progress.percent || 0) }; });
+autoUpdater.on("update-downloaded", (info) => { updateState = { ...updateState, state: "ready", version: info.version, progress: 100 }; });
+autoUpdater.on("error", (error) => { updateState = { ...updateState, state: "failed", error: error.message }; });
+
+function storageConfigPath() {
+  return path.join(app.getPath("userData"), "storage.json");
+}
+
+function readStorageConfig() {
+  const configPath = storageConfigPath();
+  if (!fs.existsSync(configPath) && fs.existsSync("D:\\AI-Models-HotCache\\Models")) {
+    return saveStorageConfig(configPath, { dataRoot: "D:\\AI-Models-HotCache" });
+  }
+  return loadStorageConfig(configPath, app.getPath("documents"));
+}
+
+function storagePaths() {
+  const storage = readStorageConfig();
+  ensureStorageDirectories(storage);
+  const legacyImageRoot = "E:\\AI-Models\\Image-Generation";
+  const directLegacy = "E:\\AI-Models\\Runtimes\\llama.cpp";
+  return {
+    ...storage,
+    imageEngineRoot: path.join(storage.dataRoot, "ImageEngine"),
+    nativePython: path.join(storage.dataRoot, "ImageEngine", "runtime", "python.exe"),
+    nativePackages: path.join(storage.dataRoot, "ImageEngine", "python_packages"),
+    comfyOutputRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Outputs") : path.join(storage.outputRoot, "Images"),
+    characterMemoryRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Character-Memory") : path.join(storage.dataRoot, "Character-Memory"),
+    directRuntimeRoot: fs.existsSync(directLegacy) ? directLegacy : path.join(storage.runtimeRoot, "llama.cpp")
+  };
+}
+
+function comfyInputRoot() {
+  const legacy = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\input";
+  return fs.existsSync(legacy) ? legacy : path.join(storagePaths().cacheRoot, "ComfyInput");
+}
+
+function comfyUpscaleRoot() {
+  const legacy = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\models\\upscale_models";
+  return fs.existsSync(legacy) ? legacy : path.join(storagePaths().modelsRoot, "upscale_models");
+}
 
 function modelCenterConfigPath() {
   return path.join(app.getPath("userData"), "models.json");
@@ -105,7 +149,7 @@ function visionImagePreparerPath() {
 }
 
 function prepareVisionImage(sourcePath, outputPath, maxSide = 1024) {
-  const python = "C:\\AI-Apps\\ComfyUI_windows_portable\\python_embeded\\python.exe";
+  const python = storagePaths().nativePython;
   const needsPhysicalCopy = String(sourcePath).includes("app.asar");
   const physicalSource = needsPhysicalCopy
     ? `${outputPath}.source${path.extname(sourcePath) || ".jpg"}`
@@ -125,7 +169,7 @@ function prepareVisionImage(sourcePath, outputPath, maxSide = 1024) {
 }
 
 function composeReferenceSheet(referencePaths, outputPath) {
-  const python = "C:\\AI-Apps\\ComfyUI_windows_portable\\python_embeded\\python.exe";
+  const python = storagePaths().nativePython;
   return new Promise((resolve, reject) => {
     execFile(
       python,
@@ -137,10 +181,11 @@ function composeReferenceSheet(referencePaths, outputPath) {
 }
 
 function nativeImageEngineAvailable() {
-  return fs.existsSync(NATIVE_IMAGE_PYTHON)
+  const storage = storagePaths();
+  return fs.existsSync(storage.nativePython)
     && fs.existsSync(nativeImageWorkerPath())
-    && fs.existsSync(path.join(NATIVE_IMAGE_PACKAGES, "diffusers", "__init__.py"))
-    && fs.existsSync("D:\\AI-Models-HotCache\\Models\\checkpoints\\animagine-xl-4.0.safetensors");
+    && fs.existsSync(path.join(storage.nativePackages, "diffusers", "__init__.py"))
+    && fs.existsSync(path.join(storage.modelsRoot, "checkpoints", "animagine-xl-4.0.safetensors"));
 }
 
 const mimeTypes = {
@@ -630,7 +675,7 @@ function quarantineRejectedImage(outputPath) {
 }
 
 function memoryIndexPath() {
-  return path.join(CHARACTER_MEMORY_ROOT, "index.json");
+  return path.join(storagePaths().characterMemoryRoot, "index.json");
 }
 
 function readCharacterMemory() {
@@ -665,18 +710,18 @@ function findKnownReferences(prompt) {
   const requestsTianlu = /(天禄|tianlu)/i.test(value);
   if (requestsBixie && requestsTianlu) {
     const bundledPair = path.join(appRoot, "references", "tianlu_bixie_pair_ref.jpg");
-    const installedPair = path.join(COMFY_INPUT_ROOT, "tianlu_bixie_pair_ref.jpg");
+    const installedPair = path.join(comfyInputRoot(), "tianlu_bixie_pair_ref.jpg");
     const pairPath = [installedPair, bundledPair].find((candidate) => fs.existsSync(candidate));
     if (pairPath) return [{ pattern: /(辟邪|bixie|pixiu).*(天禄|tianlu)|(天禄|tianlu).*(辟邪|bixie|pixiu)/i, path: pairPath }];
   }
   const known = [
     {
       pattern: /(辟邪|bixie|pixiu)/i,
-      path: path.join(COMFY_INPUT_ROOT, "bixie_ref.png")
+      path: path.join(comfyInputRoot(), "bixie_ref.png")
     },
     {
       pattern: /(天禄|tianlu)/i,
-      path: path.join(COMFY_INPUT_ROOT, "tianlu_ref.png")
+      path: path.join(comfyInputRoot(), "tianlu_ref.png")
     }
   ];
   return known.filter((item) => item.pattern.test(value) && fs.existsSync(item.path));
@@ -684,10 +729,10 @@ function findKnownReferences(prompt) {
 
 function saveCharacterMemory(prompt, sourcePath) {
   if (!sourcePath || !fs.existsSync(sourcePath)) return null;
-  fs.mkdirSync(CHARACTER_MEMORY_ROOT, { recursive: true });
+  fs.mkdirSync(storagePaths().characterMemoryRoot, { recursive: true });
   const digest = crypto.createHash("sha256").update(normalizedMemoryPrompt(prompt)).digest("hex").slice(0, 20);
   const extension = path.extname(sourcePath).toLowerCase() === ".png" ? ".png" : ".jpg";
-  const destination = path.join(CHARACTER_MEMORY_ROOT, `${digest}${extension}`);
+  const destination = path.join(storagePaths().characterMemoryRoot, `${digest}${extension}`);
   fs.copyFileSync(sourcePath, destination);
   const entries = readCharacterMemory().filter((item) => item?.path !== destination);
   entries.push({
@@ -730,7 +775,7 @@ async function uploadReferenceImage(baseUrl, filePath) {
 }
 
 function removeUploadedReference(uploadedName) {
-  const inputRoot = path.resolve(COMFY_INPUT_ROOT);
+  const inputRoot = path.resolve(comfyInputRoot());
   const candidate = path.resolve(inputRoot, uploadedName);
   if (!isInside(candidate, inputRoot)) return;
   if (fs.existsSync(candidate)) fs.rmSync(candidate, { force: true });
@@ -836,11 +881,11 @@ function comfyViewUrl(profile, item) {
 function comfyOutputPath(item) {
   if (String(item.type ?? "output") !== "output") return null;
   const candidate = path.resolve(
-    COMFY_OUTPUT_ROOT,
+    storagePaths().comfyOutputRoot,
     String(item.subfolder ?? ""),
     String(item.filename ?? "")
   );
-  if (!isInside(candidate, COMFY_OUTPUT_ROOT) || !fs.existsSync(candidate)) return null;
+  if (!isInside(candidate, storagePaths().comfyOutputRoot) || !fs.existsSync(candidate)) return null;
   return candidate;
 }
 
@@ -859,7 +904,7 @@ async function upscaleGeneratedOutputs(profile, images, settings, route) {
     return { images, ...base, resolution: "HD", upscaled: false };
   }
   const modelName = route === "anime" ? "RealESRGAN_x4plus_anime_6B.pth" : "RealESRGAN_x4plus.pth";
-  const modelPath = path.join(COMFY_UPSCALE_ROOT, modelName);
+  const modelPath = path.join(comfyUpscaleRoot(), modelName);
   const useAiUpscaler = quality === "ultra" && fs.existsSync(modelPath);
   const targets = imageOutputDimensions(settings, useAiUpscaler ? "4k" : "2k");
   if (!images.length) {
@@ -1414,7 +1459,7 @@ function startComfyUi() {
   const mainPath = path.join(portableRoot, "ComfyUI", "main.py");
   if (!fs.existsSync(pythonPath) || !fs.existsSync(mainPath)) return false;
 
-  const outputDirectory = COMFY_OUTPUT_ROOT;
+  const outputDirectory = storagePaths().comfyOutputRoot;
   fs.mkdirSync(outputDirectory, { recursive: true });
 
   const child = spawn(
@@ -1447,19 +1492,23 @@ function startComfyUi() {
 
 function startNativeImageEngine() {
   if (!nativeImageEngineAvailable()) return false;
-  const logRoot = path.join(COMFY_OUTPUT_ROOT, "VELA-Native");
+  const storage = storagePaths();
+  const logRoot = path.join(storage.comfyOutputRoot, "VELA-Native");
   fs.mkdirSync(logRoot, { recursive: true });
   const child = spawn(
-    NATIVE_IMAGE_PYTHON,
+    storage.nativePython,
     [nativeImageWorkerPath(), "--server", String(NATIVE_IMAGE_PORT)],
     {
       cwd: VELA_PROJECT_ROOT,
       windowsHide: true,
       env: {
         ...process.env,
-        HF_HOME: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache",
-        HF_HUB_CACHE: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache\\hub",
-        TRANSFORMERS_CACHE: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache\\transformers",
+        VELA_IMAGE_ENGINE_ROOT: storage.imageEngineRoot,
+        VELA_MODEL_ROOT: storage.modelsRoot,
+        VELA_IMAGE_OUTPUT_ROOT: storage.outputRoot,
+        HF_HOME: path.join(storage.imageEngineRoot, "cache"),
+        HF_HUB_CACHE: path.join(storage.imageEngineRoot, "cache", "hub"),
+        TRANSFORMERS_CACHE: path.join(storage.imageEngineRoot, "cache", "transformers"),
         HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
       },
       stdio: [
@@ -1652,13 +1701,14 @@ async function readInstalledOllamaModels() {
 
 async function independentModelCatalog() {
   const config = readModelCenterConfig();
+  const storage = storagePaths();
   const local = await readInstalledOllamaModels();
   const direct = discoverGgufModels().map((item) => ({
     ...item,
     id: `direct/${item.id}`,
     provider: "direct",
     installed: true,
-    runtimeReady: Boolean(findLlamaServer(DIRECT_RUNTIME_ROOT))
+    runtimeReady: Boolean(findLlamaServer(storage.directRuntimeRoot))
   }));
   const remote = config.providers.filter((item) => item.enabled).map((item) => ({
     id: `${item.id}/${item.model}`,
@@ -1670,35 +1720,91 @@ async function independentModelCatalog() {
   return {
     ...publicModelCenterConfig(config),
     directRuntime: {
-      installed: Boolean(findLlamaServer(DIRECT_RUNTIME_ROOT)),
+      installed: Boolean(findLlamaServer(storage.directRuntimeRoot)),
       running: await gatewayIsAvailable(DIRECT_MODEL_PORT),
-      root: DIRECT_RUNTIME_ROOT
+      root: storage.directRuntimeRoot
     },
-    imageModels: imageModelCatalog(),
+    imageRuntime: {
+      installed: nativeImageEngineAvailable(),
+      root: storage.imageEngineRoot
+    },
+    storage,
+    imageModels: imageModelCatalog(storage.modelsRoot),
     items: [...direct, ...local, ...remote]
   };
 }
 
-async function installImageModel(model) {
-  const key = `image/${model}`;
+async function installNativeImageRuntime() {
+  const key = "runtime/image";
   if (modelDownloads.get(key)?.state === "downloading") return;
-  const assets = imageModelInstallAssets(model);
-  modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
+  modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0, status: "preparing" });
   try {
-    for (const asset of assets) await downloadFile(asset.url, asset.path, key);
+    const storage = storagePaths();
+    const uv = await ensureManagedUv();
+    if (!uv) throw new Error("VELA could not prepare its Python package manager.");
+    const runtime = path.join(storage.imageEngineRoot, "runtime");
+    const python = path.join(runtime, "python.exe");
+    if (!fs.existsSync(python)) await execFileAsync(uv, ["venv", "--python", "3.12", runtime], 600000);
+    modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0, status: "installing-pytorch" });
+    await execFileAsync(uv, ["pip", "install", "--python", python, "torch", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu128"], 1800000);
+    modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0, status: "installing-image-packages" });
+    await execFileAsync(uv, ["pip", "install", "--python", python, "--target", storage.nativePackages, "diffusers>=0.35", "transformers>=4.50", "accelerate", "safetensors", "pillow"], 1800000);
+    if (!fs.existsSync(python) || !fs.existsSync(path.join(storage.nativePackages, "diffusers", "__init__.py"))) {
+      throw new Error("Image runtime verification failed.");
+    }
     modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
   } catch (error) {
     modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function downloadFile(url, destination, progressKey) {
-  const response = await fetch(url, { redirect: "follow" });
+function execFileAsync(command, args, timeout) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(String(stderr || stdout || error.message).trim()));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+async function installImageModel(model) {
+  const key = `image/${model}`;
+  if (modelDownloads.get(key)?.state === "downloading") return;
+  const assets = imageModelInstallAssets(model, storagePaths().modelsRoot);
+  modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
+  try {
+    for (const asset of assets) await downloadFile(asset.url, asset.path, key, asset.sha256);
+    modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
+  } catch (error) {
+    if (modelDownloads.get(key)?.state !== "cancelled") {
+      modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+}
+
+async function downloadFile(url, destination, progressKey, expectedSha256 = "") {
+  const partial = `${destination}.part`;
+  const offset = fs.existsSync(partial) ? fs.statSync(partial).size : 0;
+  const controller = new AbortController();
+  modelDownloadControllers.set(progressKey, controller);
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: offset > 0 ? { Range: `bytes=${offset}-` } : {},
+    signal: controller.signal
+  });
   if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}).`);
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  const total = Number(response.headers.get("content-length") || 0);
-  let completed = 0;
-  const output = fs.createWriteStream(destination);
+  const resumed = offset > 0 && response.status === 206;
+  const initial = resumed ? offset : 0;
+  const total = initial + Number(response.headers.get("content-length") || 0);
+  const disk = fs.statfsSync(path.dirname(destination));
+  const available = Number(disk.bavail) * Number(disk.bsize);
+  if (total > 0 && total - initial > available) throw new Error("Not enough free space on the selected model drive.");
+  let completed = initial;
+  const output = fs.createWriteStream(partial, { flags: resumed ? "a" : "w" });
   try {
     for await (const chunk of response.body) {
       completed += chunk.length;
@@ -1707,14 +1813,40 @@ async function downloadFile(url, destination, progressKey) {
     }
   } finally {
     await new Promise((resolve) => output.end(resolve));
+    modelDownloadControllers.delete(progressKey);
   }
+  if (expectedSha256) {
+    const digest = await sha256File(partial);
+    if (digest !== expectedSha256.toLowerCase()) throw new Error("Downloaded model failed SHA-256 verification.");
+  }
+  fs.rmSync(destination, { force: true });
+  fs.renameSync(partial, destination);
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const input = fs.createReadStream(filePath);
+    input.on("error", reject);
+    input.on("data", (chunk) => hash.update(chunk));
+    input.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+function cancelModelDownload(key) {
+  const controller = modelDownloadControllers.get(key);
+  if (!controller) return false;
+  controller.abort(new Error("Download cancelled by user."));
+  modelDownloads.set(key, { ...modelDownloads.get(key), model: key, state: "cancelled" });
+  return true;
 }
 
 async function installDirectRuntime() {
+  const directRuntimeRoot = storagePaths().directRuntimeRoot;
   const key = "llama.cpp";
   if (modelDownloads.get(key)?.state === "downloading") return;
   modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
-  const archive = path.join(DIRECT_RUNTIME_ROOT, "llama.cpp-vulkan.zip");
+  const archive = path.join(directRuntimeRoot, "llama.cpp-vulkan.zip");
   try {
     const releaseResponse = await fetch("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20", {
       headers: { "User-Agent": "VELA-Desktop" }, signal: AbortSignal.timeout(15000)
@@ -1729,15 +1861,17 @@ async function installDirectRuntime() {
     await new Promise((resolve, reject) => {
       execFile(
         "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${DIRECT_RUNTIME_ROOT.replaceAll("'", "''")}' -Force`],
+        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${directRuntimeRoot.replaceAll("'", "''")}' -Force`],
         { timeout: 600000, windowsHide: true },
         (error) => error ? reject(error) : resolve()
       );
     });
-    if (!findLlamaServer(DIRECT_RUNTIME_ROOT)) throw new Error("llama-server.exe was not found after extraction.");
+    if (!findLlamaServer(directRuntimeRoot)) throw new Error("llama-server.exe was not found after extraction.");
     modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
   } catch (error) {
-    modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
+    if (modelDownloads.get(key)?.state !== "cancelled") {
+      modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
+    }
   } finally {
     fs.rmSync(archive, { force: true });
   }
@@ -1759,7 +1893,9 @@ async function installDirectModel(model) {
     await downloadFile(entry.url, destination, model);
     modelDownloads.set(model, { model, state: "completed", completed: 1, total: 1, destination });
   } catch (error) {
-    modelDownloads.set(model, { model, state: "failed", error: error instanceof Error ? error.message : String(error) });
+    if (modelDownloads.get(model)?.state !== "cancelled") {
+      modelDownloads.set(model, { model, state: "failed", error: error instanceof Error ? error.message : String(error) });
+    }
   }
 }
 
@@ -1893,6 +2029,68 @@ function createServer() {
         return;
       }
 
+      if (url.pathname === "/api/storage" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, storagePaths());
+        return;
+      }
+
+      if (url.pathname === "/api/storage/select" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const selected = await dialog.showOpenDialog({
+          title: "选择 VELA 数据与模型目录",
+          defaultPath: storagePaths().dataRoot,
+          properties: ["openDirectory", "createDirectory"]
+        });
+        if (selected.canceled || !selected.filePaths[0]) {
+          sendJson(res, 200, { ok: false, canceled: true, storage: storagePaths() });
+          return;
+        }
+        const storage = saveStorageConfig(storageConfigPath(), { dataRoot: selected.filePaths[0] });
+        ensureStorageDirectories(storage);
+        sendJson(res, 200, { ok: true, restartRequired: true, storage });
+        return;
+      }
+
+      if (url.pathname === "/api/update" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, updateState);
+        return;
+      }
+
+      if (url.pathname === "/api/update/check" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        if (!app.isPackaged) {
+          sendJson(res, 200, { state: "development", version: VELA_RELEASE });
+          return;
+        }
+        void autoUpdater.checkForUpdates();
+        sendJson(res, 202, { state: "checking" });
+        return;
+      }
+
+      if (url.pathname === "/api/update/download" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        void autoUpdater.downloadUpdate();
+        sendJson(res, 202, { state: "downloading" });
+        return;
+      }
+
       if (url.pathname === "/api/models/install" && req.method === "POST") {
         if (!requestIsAuthorized(req, url)) {
           sendJson(res, 403, { error: "Forbidden" });
@@ -1914,6 +2112,16 @@ function createServer() {
         return;
       }
 
+      if (url.pathname.startsWith("/api/models/downloads/") && req.method === "DELETE") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const key = decodeURIComponent(url.pathname.slice("/api/models/downloads/".length));
+        sendJson(res, 200, { ok: cancelModelDownload(key), model: key });
+        return;
+      }
+
       if (url.pathname === "/api/image-models/install" && req.method === "POST") {
         if (!requestIsAuthorized(req, url)) {
           sendJson(res, 403, { error: "Forbidden" });
@@ -1922,7 +2130,7 @@ function createServer() {
         const payload = JSON.parse(await readRequestBody(req));
         const model = String(payload?.model || "").trim();
         try {
-          imageModelInstallAssets(model);
+          imageModelInstallAssets(model, storagePaths().modelsRoot);
         } catch (error) {
           sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
           return;
@@ -1932,13 +2140,23 @@ function createServer() {
         return;
       }
 
+      if (url.pathname === "/api/image-runtime/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        void installNativeImageRuntime();
+        sendJson(res, 202, { ok: true, state: "downloading", target: storagePaths().imageEngineRoot });
+        return;
+      }
+
       if (url.pathname === "/api/direct-runtime/install" && req.method === "POST") {
         if (!requestIsAuthorized(req, url)) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
         void installDirectRuntime();
-        sendJson(res, 202, { ok: true, state: "downloading", target: DIRECT_RUNTIME_ROOT });
+        sendJson(res, 202, { ok: true, state: "downloading", target: storagePaths().directRuntimeRoot });
         return;
       }
 
@@ -2150,7 +2368,7 @@ function createServer() {
         const imageOnline = nativeImageEngineAvailable();
         const components = [
           { name: "Agent Runtime", state: agentOnline ? "online" : "offline", detail: `127.0.0.1:${OCU_PORT}` },
-          { name: "Direct GGUF", state: directOnline ? "online" : findLlamaServer(DIRECT_RUNTIME_ROOT) ? "ready" : "offline", detail: directOnline ? "llama.cpp model loaded" : "llama.cpp local runtime" },
+          { name: "Direct GGUF", state: directOnline ? "online" : findLlamaServer(storagePaths().directRuntimeRoot) ? "ready" : "offline", detail: directOnline ? "llama.cpp model loaded" : "llama.cpp local runtime" },
           { name: "Ollama", state: ollama.state, detail: `${ollama.count} installed models` },
           { name: "Image Engine", state: imageOnline ? "ready" : "offline", detail: "VELA native image pipeline" }
         ];
@@ -2339,12 +2557,13 @@ async function stopDirectModelRuntime() {
 async function ensureDirectModelRuntime(model) {
   if (await gatewayIsAvailable(DIRECT_MODEL_PORT) && directModelPath === model.modelPath) return true;
   await stopDirectModelRuntime();
-  const executable = findLlamaServer(DIRECT_RUNTIME_ROOT);
+  const directRuntimeRoot = storagePaths().directRuntimeRoot;
+  const executable = findLlamaServer(directRuntimeRoot);
   if (!executable || !fs.existsSync(model.modelPath)) return false;
-  const logRoot = path.join(DIRECT_RUNTIME_ROOT, "logs");
+  const logRoot = path.join(directRuntimeRoot, "logs");
   fs.mkdirSync(logRoot, { recursive: true });
   directModelProcess = spawn(executable, buildLlamaServerArgs(model), {
-    cwd: DIRECT_RUNTIME_ROOT,
+    cwd: directRuntimeRoot,
     windowsHide: true,
     stdio: [
       "ignore",
@@ -2445,8 +2664,10 @@ async function ensureOcuApi() {
     if (!fs.existsSync(projectFile)) return false;
     if (!ocuProcess || ocuProcess.exitCode !== null) {
       try {
+        const managedUv = await ensureManagedUv();
         const uvCandidates = [
           process.env.OCU_UV_PATH,
+          managedUv,
           path.join(process.env.USERPROFILE ?? "", ".local", "bin", "uv.exe"),
           "uv"
         ].filter(Boolean);
@@ -2461,6 +2682,8 @@ async function ensureOcuApi() {
             env: {
               ...process.env,
               ...modelRuntimeEnvironment(readModelCenterConfig(), decryptApiKey),
+              UV_PROJECT_ENVIRONMENT: path.join(storagePaths().runtimeRoot, "agent-venv"),
+              UV_CACHE_DIR: path.join(storagePaths().cacheRoot, "uv"),
               OCU_OPENCLAW_ENABLED: "false",
               OCU_SESSION_DB_PATH: path.join(app.getPath("userData"), "sessions.db"),
               OCU_MEMORY_DB_PATH: path.join(app.getPath("userData"), "memory.db"),
@@ -2498,6 +2721,35 @@ async function ensureOcuApi() {
   }
 }
 
+async function ensureManagedUv() {
+  const runtimeRoot = path.join(storagePaths().runtimeRoot, "uv");
+  const executable = path.join(runtimeRoot, "uv.exe");
+  if (fs.existsSync(executable)) return executable;
+  const archive = path.join(runtimeRoot, "uv-windows.zip");
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  try {
+    await downloadFile(
+      "https://github.com/astral-sh/uv/releases/download/0.11.19/uv-x86_64-pc-windows-msvc.zip",
+      archive,
+      "runtime/uv"
+    );
+    await new Promise((resolve, reject) => {
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${runtimeRoot.replaceAll("'", "''")}' -Force`],
+        { timeout: 120000, windowsHide: true },
+        (error) => error ? reject(error) : resolve()
+      );
+    });
+    return fs.existsSync(executable) ? executable : "";
+  } catch (error) {
+    console.error(`[VELA] Managed uv installation failed: ${error instanceof Error ? error.message : String(error)}`);
+    return "";
+  } finally {
+    fs.rmSync(archive, { force: true });
+  }
+}
+
 app.setAppUserModelId("local.vela.desktop");
 
 const hasLock = app.requestSingleInstanceLock();
@@ -2514,26 +2766,17 @@ if (!hasLock) {
   });
 
   app.whenReady().then(async () => {
-    try {
-      if (!await ensureOcuApi()) {
-        throw new Error("VELA Agent Runtime could not start.");
-      }
-      server = createServer();
-      server.on("error", (error) => {
-        console.error(error);
-        // A stale or already-running desktop process can briefly retain the
-        // local port. Avoid a repeating modal loop; the single-instance path
-        // above already focuses a healthy existing window.
-        app.quit();
-      });
-      server.listen(APP_PORT, APP_HOST, () => createWindow());
-    } catch (error) {
-      dialog.showErrorBox(
-        "VELA",
-        `无法启动本地应用：${error instanceof Error ? error.message : String(error)}`
-      );
+    server = createServer();
+    server.on("error", (error) => {
+      console.error(error);
       app.quit();
-    }
+    });
+    server.listen(APP_PORT, APP_HOST, () => {
+      createWindow();
+      void ensureOcuApi().then((ready) => {
+        if (!ready) console.error("[VELA] Agent Runtime remains offline; the desktop recovery UI is available.");
+      });
+    });
   });
 
   app.on("window-all-closed", () => app.quit());
