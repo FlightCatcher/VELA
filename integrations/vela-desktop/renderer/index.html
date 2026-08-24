@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-            <small>VELA 2.0 · LOCAL INTELLIGENCE</small>
+            <small>VELA 2.1 · LOCAL INTELLIGENCE</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.0 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.1 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -326,6 +326,10 @@
           <button class="media-dialog__close" id="model-center-close" type="button">×</button>
         </div>
         <section><h3>推荐本地模型</h3><div class="model-center__grid" id="recommended-models"></div></section>
+        <section class="direct-models-section">
+          <div class="model-section-title"><div><h3>直连 GGUF</h3><p>由 VELA 直接运行模型，不经过 Ollama；同一时间只加载一个，避免占满内存。</p></div><button id="direct-runtime-install" type="button">安装直连引擎</button></div>
+          <div class="model-center__grid" id="direct-models"></div>
+        </section>
         <section><h3>API 模型</h3><form class="provider-form" id="provider-form">
           <select id="provider-template"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI Compatible</option><option value="custom">自定义</option></select>
           <input id="provider-label" placeholder="显示名称" required />
@@ -345,6 +349,6 @@
       />
       <div class="toast-region" id="toast-region" aria-live="polite"></div>
     </div>
-    <script type="module" src="/app.js?v=5.0.2"></script>
+    <script type="module" src="/app.js?v=5.1.0"></script>
   </body>
 </html>

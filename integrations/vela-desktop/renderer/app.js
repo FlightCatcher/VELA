@@ -15,8 +15,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.0 · 就绪",
-    healthDegraded: "VELA 2.0 · 部分服务离线",
+    healthReady: "VELA 2.1 · 就绪",
+    healthDegraded: "VELA 2.1 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -146,8 +146,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.0 · Ready",
-    healthDegraded: "VELA 2.0 · Degraded",
+    healthReady: "VELA 2.1 · Ready",
+    healthDegraded: "VELA 2.1 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -298,6 +298,8 @@ const els = {
   modelCenterDialog: document.querySelector("#model-center-dialog"),
   modelCenterClose: document.querySelector("#model-center-close"),
   recommendedModels: document.querySelector("#recommended-models"),
+  directModels: document.querySelector("#direct-models"),
+  directRuntimeInstall: document.querySelector("#direct-runtime-install"),
   providerForm: document.querySelector("#provider-form"),
   providerTemplate: document.querySelector("#provider-template"),
   providerLabel: document.querySelector("#provider-label"),
@@ -1236,11 +1238,16 @@ function renderWorkspacePanel() {
   els.workspacePanelSync.classList.toggle("is-error", Boolean(data.error));
 
   const planCount = data.plans.length;
+  const visiblePlans = state.workspaceView === "tasks"
+    ? data.plans.filter((plan) => !["completed", "failed", "cancelled"].includes(String(plan.status)))
+    : state.workspaceView === "runs"
+      ? data.plans.filter((plan) => ["running", "completed", "failed", "cancelled"].includes(String(plan.status)))
+      : data.plans;
   const components = Array.isArray(data.status?.components) ? data.status.components : [];
   const onlineCount = components.filter((item) => ["online", "ready", "healthy"].includes(String(item.state))).length;
   const metrics = [
     [t("workspaceStatus"), data.status?.state ?? (data.error ? t("statusOffline") : t("statusOnline"))],
-    [t("workspaceSteps"), state.workspaceView === "models" ? String(state.models.items.length) : String(planCount)],
+    [t("workspaceSteps"), state.workspaceView === "models" ? String(state.models.items.length) : String(visiblePlans.length)],
     [t("workspaceUpdated"), formatWorkspaceTime(data.plans[0]?.updated_at ?? data.plans[0]?.updatedAt)]
   ];
   els.workspacePanelMetrics.innerHTML = metrics
@@ -1257,7 +1264,7 @@ function renderWorkspacePanel() {
           </button>`).join("")
       : `<div class="workspace-empty">${escapeHtml(t("workspaceEmpty"))}</div>`;
     els.workspacePanelDetail.innerHTML = `
-      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "VELA 独立管理对话、本地模型、API 模型与生图引擎。" : "VELA independently manages chat, local and API models, and image engines.")}</p></div>
+      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "支持直连 GGUF、Ollama 与 API。直连模式完全绕过 Ollama，并且只驻留一个模型。" : "Use direct GGUF, Ollama, or API models. Direct mode bypasses Ollama and keeps only one model resident.")}</p><button class="workspace-primary-action" type="button" data-open-model-center>打开模型中心</button></div>
       <div class="workspace-component-list">${components.map((item) => `<div><span>${escapeHtml(item.name ?? "component")}</span><strong class="status-pill status-pill--${escapeHtml(String(item.state ?? "offline"))}">${escapeHtml(String(item.state ?? "offline"))}</strong></div>`).join("") || `<div class="workspace-empty">${escapeHtml(t("workspaceNoDetail"))}</div>`}</div>`;
     return;
   }
@@ -1275,8 +1282,8 @@ function renderWorkspacePanel() {
     return;
   }
 
-  els.workspacePanelList.innerHTML = planCount
-    ? data.plans.map((plan) => {
+  els.workspacePanelList.innerHTML = visiblePlans.length
+    ? visiblePlans.map((plan) => {
         const active = plan.id === data.selectedPlanId;
         const steps = Array.isArray(plan.steps) ? plan.steps : [];
         return `<button class="workspace-card workspace-card--plan${active ? " is-active" : ""}" type="button" data-plan-id="${escapeHtml(plan.id)}">
@@ -1285,7 +1292,7 @@ function renderWorkspacePanel() {
           <em class="status-pill status-pill--${escapeHtml(String(plan.status ?? "pending"))}">${escapeHtml(statusLabel(plan.status))}</em>
         </button>`;
       }).join("")
-    : `<div class="workspace-empty">${escapeHtml(data.error || t("workspaceEmpty"))}</div>`;
+    : `<div class="workspace-empty workspace-empty--action"><span>${escapeHtml(data.error || (state.workspaceView === "runs" ? "还没有运行记录" : state.workspaceView === "tasks" ? "当前没有待处理任务" : t("workspaceEmpty")))}</span><button type="button" data-go-chat>${escapeHtml(state.language === "zh" ? "去对话中创建" : "Create in chat")}</button></div>`;
 
   const detail = data.detail;
   if (!detail?.plan) {
@@ -1297,7 +1304,7 @@ function renderWorkspacePanel() {
   const reflections = Array.isArray(detail.reflections) ? detail.reflections : [];
   els.workspacePanelDetail.innerHTML = `
     <div class="workspace-detail__hero">
-      <span class="workspace-detail__eyebrow">${escapeHtml(plan.id)}</span>
+      <span class="workspace-detail__eyebrow">${escapeHtml(state.workspaceView === "runs" ? "RUN TRACE" : state.workspaceView === "tasks" ? "ACTIVE TASK" : plan.id)}</span>
       <h3>${escapeHtml(plan.goal)}</h3>
       <div class="workspace-detail__meta"><span class="status-pill status-pill--${escapeHtml(String(plan.status))}">${escapeHtml(statusLabel(plan.status))}</span><span>${steps.length} ${escapeHtml(t("workspaceSteps"))}</span><span>${escapeHtml(formatWorkspaceTime(plan.updated_at ?? plan.updatedAt))}</span></div>
     </div>
@@ -1433,6 +1440,39 @@ function renderModelCenter() {
     const isInstalled = installed.has(`ollama/${item.id}`);
     return `<article class="model-card"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.use)} · ${escapeHtml(item.size)} · ${escapeHtml(item.fit)}</span><button type="button" data-install-model="${escapeHtml(item.id)}" ${isInstalled ? "disabled" : ""}>${isInstalled ? "已安装" : "一键安装"}</button></article>`;
   }).join("");
+  if (els.directRuntimeInstall) {
+    els.directRuntimeInstall.textContent = state.models.directRuntime?.installed ? "直连引擎已安装" : "安装直连引擎";
+    els.directRuntimeInstall.disabled = Boolean(state.models.directRuntime?.installed);
+  }
+  if (els.directModels) {
+    const direct = (state.models.items || []).filter((item) => item.provider === "direct");
+    els.directModels.innerHTML = direct.length
+      ? direct.map((item) => `<article class="model-card model-card--direct"><strong>${escapeHtml(item.label)}</strong><span>GGUF · ${escapeHtml(formatBytes(item.sizeBytes))} · ${item.runtimeReady ? "可直接运行" : "需安装直连引擎"}</span><button type="button" data-select-direct="${escapeHtml(item.id)}" ${item.runtimeReady ? "" : "disabled"}>${state.models.primary === item.id ? "正在使用" : "直接运行"}</button></article>`).join("")
+      : `<div class="workspace-empty workspace-empty--action direct-model-empty"><span>还没有 GGUF 模型。可把已有模型放入 E:\\AI-Models，或下载适合本机的 Qwen3 4B Q4（约 2.5 GB）。</span><button type="button" data-download-direct="qwen3-4b-q4">下载到 E 盘</button></div>`;
+  }
+}
+
+async function installDirectRuntime() {
+  const response = await fetch("/api/direct-runtime/install", {
+    method: "POST",
+    headers: { "X-Vela-App-Key": appKey }
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "直连引擎安装失败");
+  toast("正在把 llama.cpp 直连引擎安装到 E 盘");
+  window.setTimeout(() => void refreshModelDownloads(), 1000);
+}
+
+async function installDirectModel(model) {
+  const response = await fetch("/api/direct-models/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify({ model })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "GGUF 模型下载失败");
+  toast("正在把 GGUF 模型下载到 E 盘；下载期间仍可使用 API 模型");
+  window.setTimeout(() => void refreshModelDownloads(), 1000);
 }
 
 async function installModel(model) {
@@ -1455,11 +1495,17 @@ async function refreshModelDownloads() {
   });
   if (!response.ok) return;
   const payload = await response.json();
-  const active = Array.isArray(payload.downloads)
-    ? payload.downloads.find((item) => item.status === "downloading")
-    : null;
+  const downloads = Array.isArray(payload.downloads) ? payload.downloads : [];
+  const failed = downloads.find((item) => item.state === "failed");
+  if (failed) {
+    toast(`${failed.model} 安装失败：${failed.error || "未知错误"}`);
+    await loadModels();
+    return;
+  }
+  const active = downloads.find((item) => item.state === "downloading" || item.status === "downloading");
   if (active) {
-    toast(`${active.model} · ${Math.max(0, Math.round(active.progress || 0))}%`);
+    const progress = active.total > 0 ? (active.completed / active.total) * 100 : active.progress || 0;
+    toast(`${active.model} · ${Math.max(0, Math.round(progress))}%`);
     window.setTimeout(() => void refreshModelDownloads(), 2500);
     return;
   }
@@ -2134,6 +2180,36 @@ els.recommendedModels?.addEventListener("click", (event) => {
     button.disabled = false;
     toast(String(error));
   });
+});
+els.directRuntimeInstall?.addEventListener("click", () => {
+  els.directRuntimeInstall.disabled = true;
+  void installDirectRuntime().catch((error) => {
+    els.directRuntimeInstall.disabled = false;
+    toast(String(error));
+  });
+});
+els.directModels?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-select-direct]");
+  if (button) void switchModel(button.dataset.selectDirect);
+  const download = event.target.closest("[data-download-direct]");
+  if (download) {
+    download.disabled = true;
+    void installDirectModel(download.dataset.downloadDirect).catch((error) => {
+      download.disabled = false;
+      toast(String(error));
+    });
+  }
+});
+els.workspacePanel?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-go-chat]")) {
+    state.workspaceView = "chat";
+    renderAll();
+    els.composerInput.focus();
+  }
+  if (event.target.closest("[data-open-model-center]")) {
+    renderModelCenter();
+    els.modelCenterDialog?.showModal();
+  }
 });
 els.providerTemplate?.addEventListener("change", applyProviderTemplate);
 els.providerForm?.addEventListener("submit", (event) => {

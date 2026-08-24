@@ -1,5 +1,13 @@
 # Changelog
 
+## VELA 2.1.0 — direct local models and workspace UI - 2026-08-24
+
+- Added a native GGUF runtime path powered by llama.cpp, fully bypassing Ollama.
+- Added automatic GGUF discovery under the E:/D: model libraries and one-model-at-a-time memory control.
+- Added one-click llama.cpp Vulkan runtime installation to `E:\\AI-Models\\Runtimes`.
+- Split Tasks, Plans, Runs, Models, and Tools into clearer workspace views with useful empty-state actions.
+- Expanded Model Center with direct-runtime status, direct model selection, and clearer backend choices.
+
 ## VELA 2.0.0 — independent agent release - 2026-08-24
 
 - Removed the desktop runtime dependency on OpenClaw Gateway and its configuration.

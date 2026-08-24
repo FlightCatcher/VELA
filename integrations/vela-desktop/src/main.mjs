@@ -24,10 +24,16 @@ import {
   publicModelCenterConfig,
   saveModelCenterConfig
 } from "./model-center.mjs";
+import {
+  buildLlamaServerArgs,
+  DIRECT_MODEL_PORT,
+  discoverGgufModels,
+  findLlamaServer
+} from "./direct-model-runtime.mjs";
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.0.0";
+const VELA_RELEASE = "2.1.0";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const NATIVE_IMAGE_PYTHON = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\runtime\\python.exe";
@@ -49,6 +55,7 @@ const appKey = !app.isPackaged && process.env.VELA_E2E_APP_KEY?.trim()
   ? process.env.VELA_E2E_APP_KEY.trim()
   : crypto.randomBytes(24).toString("hex");
 const modelDownloads = new Map();
+const DIRECT_RUNTIME_ROOT = "E:\\AI-Models\\Runtimes\\llama.cpp";
 
 function modelCenterConfigPath() {
   return path.join(app.getPath("userData"), "models.json");
@@ -1645,6 +1652,13 @@ async function readInstalledOllamaModels() {
 async function independentModelCatalog() {
   const config = readModelCenterConfig();
   const local = await readInstalledOllamaModels();
+  const direct = discoverGgufModels().map((item) => ({
+    ...item,
+    id: `direct/${item.id}`,
+    provider: "direct",
+    installed: true,
+    runtimeReady: Boolean(findLlamaServer(DIRECT_RUNTIME_ROOT))
+  }));
   const remote = config.providers.filter((item) => item.enabled).map((item) => ({
     id: `${item.id}/${item.model}`,
     label: `${item.label} · ${item.model}`,
@@ -1654,8 +1668,84 @@ async function independentModelCatalog() {
   }));
   return {
     ...publicModelCenterConfig(config),
-    items: [...local, ...remote]
+    directRuntime: {
+      installed: Boolean(findLlamaServer(DIRECT_RUNTIME_ROOT)),
+      running: await gatewayIsAvailable(DIRECT_MODEL_PORT),
+      root: DIRECT_RUNTIME_ROOT
+    },
+    items: [...direct, ...local, ...remote]
   };
+}
+
+async function downloadFile(url, destination, progressKey) {
+  const response = await fetch(url, { redirect: "follow" });
+  if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}).`);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const total = Number(response.headers.get("content-length") || 0);
+  let completed = 0;
+  const output = fs.createWriteStream(destination);
+  try {
+    for await (const chunk of response.body) {
+      completed += chunk.length;
+      output.write(chunk);
+      modelDownloads.set(progressKey, { model: progressKey, state: "downloading", completed, total });
+    }
+  } finally {
+    await new Promise((resolve) => output.end(resolve));
+  }
+}
+
+async function installDirectRuntime() {
+  const key = "llama.cpp";
+  if (modelDownloads.get(key)?.state === "downloading") return;
+  modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
+  const archive = path.join(DIRECT_RUNTIME_ROOT, "llama.cpp-vulkan.zip");
+  try {
+    const releaseResponse = await fetch("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20", {
+      headers: { "User-Agent": "VELA-Desktop" }, signal: AbortSignal.timeout(15000)
+    });
+    if (!releaseResponse.ok) throw new Error(`GitHub release lookup failed (${releaseResponse.status}).`);
+    const releases = await releaseResponse.json();
+    const asset = (Array.isArray(releases) ? releases : [])
+      .flatMap((release) => release.assets || [])
+      .find((item) => /^llama-.*-bin-win-vulkan-x64\.zip$/i.test(item.name));
+    if (!asset?.browser_download_url) throw new Error("No current llama.cpp Windows Vulkan x64 package was found.");
+    await downloadFile(asset.browser_download_url, archive, key);
+    await new Promise((resolve, reject) => {
+      execFile(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${DIRECT_RUNTIME_ROOT.replaceAll("'", "''")}' -Force`],
+        { timeout: 600000, windowsHide: true },
+        (error) => error ? reject(error) : resolve()
+      );
+    });
+    if (!findLlamaServer(DIRECT_RUNTIME_ROOT)) throw new Error("llama-server.exe was not found after extraction.");
+    modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
+  } catch (error) {
+    modelDownloads.set(key, { model: key, state: "failed", error: error instanceof Error ? error.message : String(error) });
+  } finally {
+    fs.rmSync(archive, { force: true });
+  }
+}
+
+async function installDirectModel(model) {
+  const catalog = {
+    "qwen3-4b-q4": {
+      fileName: "Qwen3-4B-Q4_K_M.gguf",
+      url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true"
+    }
+  };
+  const entry = catalog[model];
+  if (!entry) throw new Error("Unknown direct model.");
+  if (modelDownloads.get(model)?.state === "downloading") return;
+  const destination = path.join("E:\\AI-Models\\GGUF", entry.fileName);
+  modelDownloads.set(model, { model, state: "downloading", completed: 0, total: 0 });
+  try {
+    await downloadFile(entry.url, destination, model);
+    modelDownloads.set(model, { model, state: "completed", completed: 1, total: 1, destination });
+  } catch (error) {
+    modelDownloads.set(model, { model, state: "failed", error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function installOllamaModel(model) {
@@ -1809,6 +1899,32 @@ function createServer() {
         return;
       }
 
+      if (url.pathname === "/api/direct-runtime/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        void installDirectRuntime();
+        sendJson(res, 202, { ok: true, state: "downloading", target: DIRECT_RUNTIME_ROOT });
+        return;
+      }
+
+      if (url.pathname === "/api/direct-models/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const payload = JSON.parse(await readRequestBody(req));
+        const model = String(payload?.model || "").trim();
+        if (model !== "qwen3-4b-q4") {
+          sendJson(res, 400, { error: "Unknown direct model." });
+          return;
+        }
+        void installDirectModel(model);
+        sendJson(res, 202, { ok: true, model, state: "downloading", target: "E:\\AI-Models\\GGUF" });
+        return;
+      }
+
       if (url.pathname === "/api/providers" && req.method === "POST") {
         if (!requestIsAuthorized(req, url)) {
           sendJson(res, 403, { error: "Forbidden" });
@@ -1899,6 +2015,26 @@ function createServer() {
           return;
         }
         const config = readModelCenterConfig();
+        if (selected.provider === "direct") {
+          const directId = selected.id.slice("direct/".length);
+          const directModel = {
+            id: directId,
+            label: selected.label,
+            modelPath: selected.modelPath,
+            contextSize: selected.contextSize,
+            gpuLayers: selected.gpuLayers
+          };
+          config.directModels = [
+            ...config.directModels.filter((item) => item.id !== directId),
+            directModel
+          ];
+          if (!await ensureDirectModelRuntime(directModel)) {
+            sendJson(res, 503, { error: "Direct runtime is unavailable. Install llama.cpp from Model Center first." });
+            return;
+          }
+        } else {
+          await stopDirectModelRuntime();
+        }
         config.primary = selected.id;
         saveModelCenterConfig(modelCenterConfigPath(), config);
         await restartOcuApi();
@@ -1973,15 +2109,25 @@ function createServer() {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        try {
-          await ensureOcuApi();
-          sendJson(res, 200, await requestOcuJson("/v1/status"));
-        } catch (error) {
-          sendJson(res, 503, {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
+        const [agentOnline, ollama] = await Promise.all([
+          gatewayIsAvailable(OCU_PORT),
+          readOllamaHealth()
+        ]);
+        const directOnline = await gatewayIsAvailable(DIRECT_MODEL_PORT);
+        const imageOnline = nativeImageEngineAvailable();
+        const components = [
+          { name: "Agent Runtime", state: agentOnline ? "online" : "offline", detail: `127.0.0.1:${OCU_PORT}` },
+          { name: "Direct GGUF", state: directOnline ? "online" : findLlamaServer(DIRECT_RUNTIME_ROOT) ? "ready" : "offline", detail: directOnline ? "llama.cpp model loaded" : "llama.cpp local runtime" },
+          { name: "Ollama", state: ollama.state, detail: `${ollama.count} installed models` },
+          { name: "Image Engine", state: imageOnline ? "ready" : "offline", detail: "VELA native image pipeline" }
+        ];
+        sendJson(res, 200, {
+          ok: true,
+          data: {
+            state: agentOnline ? "online" : "starting",
+            components
+          }
+        });
         return;
       }
 
@@ -2144,6 +2290,48 @@ let ocuStartPromise = null;
 let comfyStartPromise = null;
 let nativeImageProcess = null;
 let nativeImageStartPromise = null;
+let directModelProcess = null;
+let directModelPath = "";
+
+async function stopDirectModelRuntime() {
+  if (!directModelProcess || directModelProcess.exitCode !== null) return;
+  const child = directModelProcess;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill();
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 4000))]);
+  if (directModelProcess === child) directModelProcess = null;
+  directModelPath = "";
+}
+
+async function ensureDirectModelRuntime(model) {
+  if (await gatewayIsAvailable(DIRECT_MODEL_PORT) && directModelPath === model.modelPath) return true;
+  await stopDirectModelRuntime();
+  const executable = findLlamaServer(DIRECT_RUNTIME_ROOT);
+  if (!executable || !fs.existsSync(model.modelPath)) return false;
+  const logRoot = path.join(DIRECT_RUNTIME_ROOT, "logs");
+  fs.mkdirSync(logRoot, { recursive: true });
+  directModelProcess = spawn(executable, buildLlamaServerArgs(model), {
+    cwd: DIRECT_RUNTIME_ROOT,
+    windowsHide: true,
+    stdio: [
+      "ignore",
+      fs.openSync(path.join(logRoot, "server.log"), "a"),
+      fs.openSync(path.join(logRoot, "server-error.log"), "a")
+    ]
+  });
+  directModelPath = model.modelPath;
+  directModelProcess.once("exit", () => {
+    directModelProcess = null;
+    directModelPath = "";
+  });
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    if (await gatewayIsAvailable(DIRECT_MODEL_PORT)) return true;
+    if (!directModelProcess) return false;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
 let activeImageJob = null;
 
 function requestOcuJson(requestPath, method = "GET", payload = null, timeoutMs = 5000) {
@@ -2204,6 +2392,11 @@ async function restartOcuApi() {
 async function ensureOcuApi() {
   if (ocuStartPromise) return ocuStartPromise;
   ocuStartPromise = (async () => {
+    const startupConfig = readModelCenterConfig();
+    if (startupConfig.primary.startsWith("direct/")) {
+      const direct = startupConfig.directModels.find((item) => `direct/${item.id}` === startupConfig.primary);
+      if (!direct || !await ensureDirectModelRuntime(direct)) return false;
+    }
     // The full status route performs deep component checks and may exceed a
     // cold-start timeout even when the API is already listening. Prefer a
     // cheap loopback probe so desktop restarts never spawn duplicate servers.
@@ -2311,5 +2504,6 @@ if (!hasLock) {
   app.on("before-quit", () => {
     server?.close();
     if (ocuProcess && ocuProcess.exitCode === null) ocuProcess.kill();
+    if (directModelProcess && directModelProcess.exitCode === null) directModelProcess.kill();
   });
 }

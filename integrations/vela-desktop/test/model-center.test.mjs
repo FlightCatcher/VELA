@@ -36,3 +36,13 @@ test("runtime environment routes local and API models", () => {
   assert.equal(environment.OCU_OLLAMA_BASE_URL, "https://api.deepseek.com");
   assert.equal(environment.OCU_OLLAMA_API_KEY, "secret");
 });
+
+test("runtime environment routes a direct GGUF model without Ollama", () => {
+  const config = normalizeModelCenterConfig({
+    primary: "direct/qwen-direct",
+    directModels: [{ id: "qwen-direct", modelPath: "E:\\AI-Models\\qwen.gguf" }]
+  });
+  const environment = modelRuntimeEnvironment(config);
+  assert.equal(environment.OCU_OLLAMA_BASE_URL, "http://127.0.0.1:11435");
+  assert.equal(environment.OCU_OLLAMA_MODEL, "qwen-direct");
+});

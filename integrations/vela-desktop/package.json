@@ -1,6 +1,6 @@
 {
   "name": "vela-desktop",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "description": "VELA independent local-first AI agent desktop.",
@@ -39,12 +39,30 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "../../src", "to": "agent/src" },
-      { "from": "../../configs", "to": "agent/configs" },
-      { "from": "../../prompts", "to": "agent/prompts" },
-      { "from": "../../pyproject.toml", "to": "agent/pyproject.toml" },
-      { "from": "../../uv.lock", "to": "agent/uv.lock" },
-      { "from": "../../README.md", "to": "agent/README.md" }
+      {
+        "from": "../../src",
+        "to": "agent/src"
+      },
+      {
+        "from": "../../configs",
+        "to": "agent/configs"
+      },
+      {
+        "from": "../../prompts",
+        "to": "agent/prompts"
+      },
+      {
+        "from": "../../pyproject.toml",
+        "to": "agent/pyproject.toml"
+      },
+      {
+        "from": "../../uv.lock",
+        "to": "agent/uv.lock"
+      },
+      {
+        "from": "../../README.md",
+        "to": "agent/README.md"
+      }
     ],
     "win": {
       "icon": "build/vela-icon.ico",

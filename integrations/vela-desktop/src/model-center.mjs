@@ -16,9 +16,10 @@ export const BUILTIN_PROVIDERS = Object.freeze([
 
 export function defaultModelCenterConfig() {
   return {
-    version: 1,
+    version: 2,
     primary: "ollama/qwen3:8b",
     providers: [],
+    directModels: [],
     updatedAt: new Date().toISOString()
   };
 }
@@ -48,11 +49,31 @@ export function normalizeModelCenterConfig(value) {
   const providers = Array.isArray(source.providers)
     ? source.providers.map(normalizeProvider).filter(Boolean)
     : [];
+  const directModels = Array.isArray(source.directModels)
+    ? source.directModels.map(normalizeDirectModel).filter(Boolean)
+    : [];
   return {
-    version: 1,
+    version: 2,
     primary: String(source.primary || "ollama/qwen3:8b"),
     providers,
+    directModels,
     updatedAt: String(source.updatedAt || new Date().toISOString())
+  };
+}
+
+function normalizeDirectModel(value) {
+  if (!value || typeof value !== "object") return null;
+  const modelPath = path.resolve(String(value.modelPath || "").trim());
+  if (path.extname(modelPath).toLowerCase() !== ".gguf") return null;
+  const id = String(value.id || path.basename(modelPath, ".gguf"))
+    .trim().replace(/[^a-z0-9_.-]/gi, "-").toLowerCase();
+  if (!id) return null;
+  return {
+    id,
+    label: String(value.label || path.basename(modelPath, ".gguf")).trim().slice(0, 120),
+    modelPath,
+    contextSize: Math.min(32768, Math.max(1024, Number(value.contextSize || 4096))),
+    gpuLayers: Math.min(999, Math.max(0, Number(value.gpuLayers ?? 99)))
   };
 }
 
@@ -86,6 +107,15 @@ export function publicModelCenterConfig(config) {
 
 export function modelRuntimeEnvironment(config, decryptApiKey = () => "") {
   const primary = String(config.primary || "ollama/qwen3:8b");
+  if (primary.startsWith("direct/")) {
+    const direct = config.directModels.find((item) => `direct/${item.id}` === primary);
+    if (!direct) throw new Error(`Configured direct model is unavailable: ${primary}`);
+    return {
+      OCU_OLLAMA_BASE_URL: "http://127.0.0.1:11435",
+      OCU_OLLAMA_MODEL: direct.id,
+      OCU_OLLAMA_API_KEY: "vela-local"
+    };
+  }
   if (primary.startsWith("ollama/")) {
     return {
       OCU_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
