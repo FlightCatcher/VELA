@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
 from openclaw_ultimate.core.runtime import (
     Agent,
     AgentRuntime,
+    RuntimeResult,
 )
 from openclaw_ultimate.governance import PlanControlState, SQLiteGovernanceStore
 from openclaw_ultimate.planner.graph import TaskGraph
@@ -28,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 class PlanExecutionError(RuntimeError):
     """计划当前不能执行。"""
+
+
+class _PlanInterrupted(RuntimeError):
+    def __init__(self, state: PlanControlState) -> None:
+        self.state = state
+        super().__init__(state.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,12 +116,10 @@ class PlanExecutor:
                 store.save(current)
 
                 try:
-                    result = await self.runtime.run(
-                        agent,
-                        self._build_step_prompt(
-                            current,
-                            step,
-                        ),
+                    result = await self._run_step(
+                        agent=agent,
+                        prompt=self._build_step_prompt(current, step),
+                        plan_id=current.id,
                     )
                     verification = self.verifier.verify(
                         plan=current,
@@ -123,6 +129,23 @@ class PlanExecutor:
                     store.save_verification(verification)
                     if not verification.passed:
                         raise StepVerificationError(verification)
+                except _PlanInterrupted as interruption:
+                    current = self._replace_step(
+                        current,
+                        step.with_status(StepStatus.PENDING),
+                    )
+                    status = (
+                        PlanStatus.PAUSED
+                        if interruption.state == PlanControlState.PAUSE
+                        else PlanStatus.CANCELLED
+                    )
+                    current = current.with_status(status)
+                    store.save(current)
+                    return PlanExecutionResult(
+                        plan=current,
+                        completed_step_ids=tuple(completed_ids),
+                        interrupted_reason=status.value,
+                    )
                 except Exception as exc:  # noqa: BLE001 - executor must persist any agent failure
                     current = self._replace_step(
                         current,
@@ -216,6 +239,34 @@ class PlanExecutor:
             plan=current,
             completed_step_ids=tuple(completed_ids),
         )
+
+    async def _run_step(
+        self,
+        *,
+        agent: Agent,
+        prompt: str,
+        plan_id: str,
+    ) -> RuntimeResult:
+        task = asyncio.create_task(self.runtime.run(agent, prompt))
+        if self.control_store is None:
+            return await task
+        try:
+            while not task.done():
+                done, _ = await asyncio.wait({task}, timeout=0.1)
+                if done:
+                    return task.result()
+                state = self.control_store.plan_control_state(plan_id)
+                if state in {PlanControlState.PAUSE, PlanControlState.CANCEL}:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    raise _PlanInterrupted(state)
+            return task.result()
+        finally:
+            if not task.done():
+                task.cancel()
 
     def _apply_control(
         self,

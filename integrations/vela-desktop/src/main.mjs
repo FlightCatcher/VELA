@@ -7,11 +7,25 @@ import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  analyzeImageRequest,
+  buildReferenceQueries,
+  compileImagePrompt,
+  compileNegativePrompt,
+  configureMultiReferenceIpAdapter,
+  parseVisualReviewResponse,
+  publicWorkflowSummary,
+  selectReferenceCandidate,
+  imageJobIsStale
+} from "./image-workflow.mjs";
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "1.8.0";
+const VELA_RELEASE = "2.0.0";
 const COMFY_PORT = 8188;
+const NATIVE_IMAGE_PORT = 8190;
+const NATIVE_IMAGE_PYTHON = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\runtime\\python.exe";
+const NATIVE_IMAGE_PACKAGES = "D:\\AI-Models-HotCache\\VELA-ImageEngine\\python_packages";
 const OCU_PORT = 8765;
 const OCU_PROJECT_ROOT = process.env.OCU_PROJECT_ROOT ?? "E:\\Projects\\OpenClaw-Ultimate";
 const COMFY_INPUT_ROOT = "C:\\AI-Apps\\ComfyUI_windows_portable\\ComfyUI\\input";
@@ -23,7 +37,69 @@ const CHARACTER_MEMORY_ROOT = "E:\\AI-Models\\Image-Generation\\Character-Memory
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, "..");
 const rendererRoot = path.join(appRoot, "renderer");
-const appKey = crypto.randomBytes(24).toString("hex");
+const appKey = !app.isPackaged && process.env.VELA_E2E_APP_KEY?.trim()
+  ? process.env.VELA_E2E_APP_KEY.trim()
+  : crypto.randomBytes(24).toString("hex");
+
+function nativeImageWorkerPath() {
+  const root = appRoot.includes("app.asar")
+    ? appRoot.replace("app.asar", "app.asar.unpacked")
+    : appRoot;
+  return path.join(root, "src", "native_image_engine.py");
+}
+
+function referenceComposerPath() {
+  const root = appRoot.includes("app.asar")
+    ? appRoot.replace("app.asar", "app.asar.unpacked")
+    : appRoot;
+  return path.join(root, "src", "compose_references.py");
+}
+
+function visionImagePreparerPath() {
+  const root = appRoot.includes("app.asar")
+    ? appRoot.replace("app.asar", "app.asar.unpacked")
+    : appRoot;
+  return path.join(root, "src", "prepare_vision_image.py");
+}
+
+function prepareVisionImage(sourcePath, outputPath, maxSide = 1024) {
+  const python = "C:\\AI-Apps\\ComfyUI_windows_portable\\python_embeded\\python.exe";
+  const needsPhysicalCopy = String(sourcePath).includes("app.asar");
+  const physicalSource = needsPhysicalCopy
+    ? `${outputPath}.source${path.extname(sourcePath) || ".jpg"}`
+    : sourcePath;
+  if (needsPhysicalCopy) fs.copyFileSync(sourcePath, physicalSource);
+  return new Promise((resolve, reject) => {
+    execFile(
+      python,
+      [visionImagePreparerPath(), physicalSource, outputPath, String(maxSide)],
+      { timeout: 60000, windowsHide: true },
+      (error) => {
+        if (needsPhysicalCopy) fs.rmSync(physicalSource, { force: true });
+        error ? reject(error) : resolve(outputPath);
+      }
+    );
+  });
+}
+
+function composeReferenceSheet(referencePaths, outputPath) {
+  const python = "C:\\AI-Apps\\ComfyUI_windows_portable\\python_embeded\\python.exe";
+  return new Promise((resolve, reject) => {
+    execFile(
+      python,
+      [referenceComposerPath(), outputPath, ...referencePaths.slice(0, 2)],
+      { timeout: 60000, windowsHide: true },
+      (error) => error ? reject(error) : resolve(outputPath)
+    );
+  });
+}
+
+function nativeImageEngineAvailable() {
+  return fs.existsSync(NATIVE_IMAGE_PYTHON)
+    && fs.existsSync(nativeImageWorkerPath())
+    && fs.existsSync(path.join(NATIVE_IMAGE_PACKAGES, "diffusers", "__init__.py"))
+    && fs.existsSync("D:\\AI-Models-HotCache\\Models\\checkpoints\\animagine-xl-4.0.safetensors");
+}
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -99,6 +175,24 @@ function setOpenClawModel(model) {
   });
 }
 
+function setKnowledgeDownloadPaused(paused) {
+  if (process.platform !== "win32") return Promise.resolve(false);
+  const action = paused ? "Suspend-BitsTransfer" : "Resume-BitsTransfer";
+  const requiredState = paused ? "Transferring" : "Suspended";
+  const script = [
+    "$job = Get-BitsTransfer -Name 'VELA-Knowledge-ZH-Wikipedia-2026-05' -ErrorAction SilentlyContinue",
+    `if ($job -and $job.JobState -eq '${requiredState}') { $job | ${action}; Write-Output 'changed' }`
+  ].join("; ");
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { timeout: 12000, windowsHide: true },
+      (_error, stdout) => resolve(String(stdout ?? "").includes("changed"))
+    );
+  });
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -132,7 +226,7 @@ function readComfyProfile(config) {
     fluxOutputNodeId: String(image.fluxOutputNodeId ?? "12"),
     referenceImageNodeId: String(image.referenceImageNodeId ?? "12"),
     pollIntervalMs: Number(image.pollIntervalMs ?? 1000),
-    timeoutMs: Number(image.timeoutMs ?? 600000)
+    timeoutMs: Math.max(1200000, Number(image.timeoutMs ?? 1200000))
   };
 }
 
@@ -150,43 +244,68 @@ function imageRoute(prompt, settings = {}) {
 
 function knownCharacterFacts(prompt) {
   const value = String(prompt ?? "");
+  const facts = [];
   if (/(辟邪|bixie|pixiu)/i.test(value)) {
-    return "Identity lock: Pixiu/Pixie from 有兽焉 (Fabulous Beasts), one small fluffy white canine-like mythical beast, red facial and body markings, red tail, red plum-blossom hindquarter markings, chartreuse-to-lime gradient eyes, two bronze back-to-back horns between the ears, notched left ear, deadpan expression. Do not turn it into a generic lucky mascot, lion, fox, cat, or dragon.";
+    facts.push("Bixie from 有兽焉: small fluffy white pixiu, crimson facial and body markings, red tail, lime-green eyes, bronze horn, calm expression");
   }
   if (/(天禄|tianlu)/i.test(value)) {
-    return "Identity lock: Tianlu from 有兽焉 (Fabulous Beasts); preserve the exact reference silhouette, coat pattern, facial markings, eye colors, horns, ears, tail, and body proportions. Do not substitute another character.";
+    facts.push("Tianlu from 有兽焉: small fluffy white pixiu, cyan forehead curls and body markings, cyan tail, golden horn, golden-green eyes, cheerful expression");
   }
-  return "";
+  return facts.length ? `Identity lock: ${facts.join("; ")}. Do not merge or substitute the characters.` : "";
 }
 
-function referenceLockPrompt(prompt, visualSpec = "") {
+function referenceLockPrompt(prompt, visualSpec = "", identityPrompt = prompt) {
   return [
     "REFERENCE-LOCKED CHARACTER EDIT.",
     "Reference image is authoritative for identity. Preserve the exact silhouette, facial geometry, proportions, palette, line weight, rendering style, and signature markings.",
     "Change only the requested pose, expression, action, camera, clothing, or background.",
-    "Exactly one main subject. No companion, duplicate, clone, character sheet, collage, or generic redesign.",
-    knownCharacterFacts(prompt),
+    /(辟邪|bixie|pixiu)/i.test(identityPrompt) && /(天禄|tianlu)/i.test(identityPrompt)
+      ? "Exactly two distinct characters together in one shared scene, both fully visible. No split screen, panels, character sheet, duplicate, clone, or merged body."
+      : "Exactly one main subject. No companion, duplicate, clone, character sheet, collage, or generic redesign.",
+    knownCharacterFacts(identityPrompt),
     visualSpec ? `Vision inspection of the reference: ${visualSpec}` : "",
     String(prompt ?? "").trim(),
     "Do not beautify, chibify, modernize, add decorative detail, or replace the character with a namesake."
   ].filter(Boolean).join(" ");
 }
 
-function routedImagePrompt(prompt, route, visualSpec = "") {
+function textOnlyImagePrompt(prompt, route) {
   const cleaned = String(prompt ?? "").trim();
   if (route === "realistic") {
     return `${cleaned}, photorealistic, natural lighting, realistic material and skin or fur detail, professional photography, sharp subject, no text, no watermark`;
   }
-  return `${referenceLockPrompt(cleaned, visualSpec)}, masterpiece, best quality, anime illustration, clean lineart, expressive character design, cel shading, vivid but coherent colors, no text, no watermark`;
+  if (route === "general") {
+    return `${cleaned}, coherent cinematic concept art, strong composition, atmospheric depth, faithful requested color palette, fine detail, no text, no watermark`;
+  }
+  return `${cleaned}, one clear main subject, coherent scene, masterpiece, best quality, anime illustration, clean lineart, expressive character design, cel shading, vivid but coherent colors, no text, no watermark`;
 }
 
-function routedFluxPrompt(prompt, visualSpec = "") {
+function routedImagePrompt(prompt, route, visualSpec = "", referenceLocked = false, identityPrompt = prompt) {
+  if (!referenceLocked) return textOnlyImagePrompt(prompt, route);
+  return `${referenceLockPrompt(prompt, visualSpec, identityPrompt)}, masterpiece, best quality, anime illustration, clean lineart, expressive character design, cel shading, vivid but coherent colors, no text, no watermark`;
+}
+
+function routedFluxPrompt(prompt, visualSpec = "", referenceLocked = false, identityPrompt = prompt) {
   const cleaned = String(prompt ?? "").trim();
-  return `${referenceLockPrompt(cleaned, visualSpec)} High-quality concept illustration, coherent composition, clear subject silhouette, expressive pose, refined materials, controlled lighting, no text, no watermark.`;
+  if (!referenceLocked) {
+    return `${cleaned} One clear main subject. High-quality concept illustration, coherent composition, clear subject silhouette, expressive pose, refined materials, controlled lighting, no text, no watermark.`;
+  }
+  if (/(辟邪|bixie|pixiu)/i.test(identityPrompt) && /(天禄|tianlu)/i.test(identityPrompt)) {
+    return [
+      "Preserve exactly the two Fabulous Beasts characters from the reference.",
+      "Bixie with crimson markings stays on the left; Tianlu with cyan markings stays on the right.",
+      cleaned,
+      "Show both distinct characters full body in one continuous scene.",
+      "Keep their exact official anime faces, horns, eyes, markings, tails, proportions and clean line style.",
+      "No third character, collage, panels, text, merged identity or redesign."
+    ].join(" ");
+  }
+  return `${referenceLockPrompt(cleaned, visualSpec, identityPrompt)} High-quality concept illustration, coherent composition, clear subject silhouette, expressive pose, refined materials, controlled lighting, no text, no watermark.`;
 }
 
 function imageEngine(settings = {}) {
-  const requested = String(settings?.engine ?? "anime").toLowerCase();
+  const requested = String(settings?.engine ?? "auto").toLowerCase();
+  if (requested === "auto") return "auto";
   if (["ssd1b", "ssd-1b", "fast", "sdxl"].includes(requested)) return "ssd1b";
   if (["realistic", "photo", "portrait", "juggernaut"].includes(requested)) return "realistic";
   return requested === "flux" || requested === "flux2" ? "flux2" : "anime";
@@ -205,8 +324,15 @@ function imageDimensions(settings = {}) {
   return { width, height };
 }
 
-function imageOutputDimensions(settings = {}) {
-  const dimensions = {
+function imageOutputDimensions(settings = {}, tier = "4k") {
+  const dimensions = tier === "2k" ? {
+    square: [2048, 2048],
+    landscape: [2560, 1440],
+    portrait: [1440, 2560],
+    classic: [2560, 1920],
+    vertical: [1920, 2560],
+    photo: [2560, 1707]
+  } : {
     square: [3840, 3840],
     landscape: [3840, 2160],
     portrait: [2160, 3840],
@@ -272,15 +398,12 @@ async function searchBingImageCandidates(query) {
   return candidates;
 }
 
-async function searchReferenceImage(prompt) {
+async function searchReferenceImage(prompt, spec = null) {
   const cleaned = String(prompt).trim().slice(0, 180);
-  const queries = [
+  const queries = spec ? buildReferenceQueries(spec) : [
     `"${cleaned}" official character sheet reference illustration`,
     `${cleaned} 角色设定图 官方 立绘 正面`,
-    `${cleaned} character design sheet full body reference`,
-    `${cleaned} site:baike.baidu.com OR site:baike.baidu.com 角色图`,
-    `${cleaned} site:pixiv.net OR site:weibo.com 角色设定`,
-    `${cleaned} site:bilibili.com OR site:lofter.com 官方参考图`
+    `${cleaned} character design sheet full body reference`
   ];
   const batches = await Promise.allSettled(queries.map(searchBingImageCandidates));
   const candidates = [...new Set(batches.flatMap((batch) => batch.status === "fulfilled" ? batch.value : []))];
@@ -304,6 +427,85 @@ async function availableOllamaVisionModel() {
       ?? "";
   } catch {
     return "";
+  }
+}
+
+async function availableOllamaPromptModel() {
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(2500) });
+    if (!response.ok) return "";
+    const models = await response.json();
+    const names = Array.isArray(models?.models) ? models.models.map((item) => String(item?.name ?? "")) : [];
+    return names.find((name) => /^qwen3:8b$/i.test(name))
+      ?? names.find((name) => /^qwen2\.5-coder:7b$/i.test(name))
+      ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function knownCharacterScenePrompt(prompt) {
+  const value = String(prompt ?? "");
+  const parts = [];
+  if (/(合照|合影|group photo|portrait together)/i.test(value)) parts.push("friendly group portrait, side by side, both characters fully visible");
+  if (/(站立|站在|站着|standing)/i.test(value)) parts.push("standing naturally");
+  if (/(奔跑|跑|running)/i.test(value)) parts.push("running together");
+  if (/(飞|flying)/i.test(value)) parts.push("flying through the scene");
+  if (/(城市|街道|city|street)/i.test(value)) parts.push("in a coherent modern city street");
+  if (/(咖啡厅|咖啡馆|cafe|coffee shop)/i.test(value)) parts.push("inside a cozy cafe");
+  if (/(喝咖啡|饮用咖啡|drinking coffee)/i.test(value)) parts.push("drinking a cup of coffee");
+  if (/(冬装|冬季服装|冬天穿着|winter clothing|winter outfit)/i.test(value)) parts.push("wearing tasteful winter clothing");
+  if (/(森林|forest)/i.test(value)) parts.push("in a quiet forest");
+  if (/(竹林|竹子|bamboo)/i.test(value)) parts.push("together in one continuous bamboo forest scene");
+  if (/(黄昏|日落|sunset)/i.test(value)) parts.push("at warm sunset");
+  if (/(夜景|夜晚|night)/i.test(value)) parts.push("at night");
+  return parts.join(", ") || "a clean character illustration matching the requested action and setting";
+}
+
+async function prepareImagePrompt(prompt, spec = null) {
+  const cleaned = String(prompt ?? "").replace(/\s+/g, " ").trim();
+  if (!cleaned || !/[\u3400-\u9fff]/u.test(cleaned)) return cleaned;
+  if (Array.isArray(spec?.knownCharacters) && spec.knownCharacters.length) {
+    return knownCharacterScenePrompt(cleaned);
+  }
+  const model = await availableOllamaPromptModel();
+  if (!model) return cleaned;
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(45000),
+      body: JSON.stringify({
+        model,
+        keep_alive: 0,
+        stream: false,
+        think: false,
+        options: { temperature: 0.1 },
+        messages: [{
+          role: "system",
+          content: "Return JSON only: {\"scene\":\"...\"}. Translate the visual request into at most 32 English words. Preserve subject count, action, setting, camera, colors and style. Keep proper names unchanged. Never explain, reinterpret folklore, or add objects."
+        }, {
+          role: "user",
+          content: cleaned.slice(0, 1800)
+        }]
+      })
+    });
+    if (!response.ok) return cleaned;
+    const payload = await response.json();
+    const raw = String(payload?.message?.content ?? "")
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .trim();
+    let translated = "";
+    try {
+      translated = String(JSON.parse(raw)?.scene ?? "");
+    } catch {
+      translated = raw;
+    }
+    translated = translated.replace(/[*#`]/g, "").replace(/\s+/g, " ").trim();
+    const words = translated.split(" ").filter(Boolean);
+    return translated && words.length <= 36 ? translated : cleaned;
+  } catch {
+    return cleaned;
   }
 }
 
@@ -333,6 +535,112 @@ async function inspectReferenceImage(localPath, prompt) {
   return String(payload?.message?.content ?? "").replace(/\s+/g, " ").trim().slice(0, 1200);
 }
 
+async function evaluateReferenceImage(localPath, prompt) {
+  const model = await availableOllamaVisionModel();
+  if (!model || !localPath || !fs.existsSync(localPath)) return { score: 50, visualSpec: "" };
+  const stat = fs.statSync(localPath);
+  if (!stat.isFile() || stat.size > 12 * 1024 * 1024) return { score: 0, visualSpec: "" };
+  const image = fs.readFileSync(localPath).toString("base64");
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(60000),
+      body: JSON.stringify({
+        model,
+        keep_alive: 0,
+        stream: false,
+        format: "json",
+        options: { temperature: 0 },
+        messages: [{
+          role: "user",
+          content: `Evaluate whether this is a useful visual reference for: ${String(prompt).slice(0, 220)}. Return JSON only with {"score":0-100,"visualSpec":"stable visible identity or location traits under 160 words"}. Penalize unrelated subjects, fan redesigns, collages, text-heavy pages, screenshots and low-resolution thumbnails.`,
+          images: [image]
+        }]
+      })
+    });
+    if (!response.ok) return { score: 0, visualSpec: "" };
+    const payload = await response.json();
+    const parsed = JSON.parse(String(payload?.message?.content ?? "{}"));
+    return {
+      score: Math.max(0, Math.min(100, Number(parsed?.score) || 0)),
+      visualSpec: String(parsed?.visualSpec ?? "").replace(/\s+/g, " ").trim().slice(0, 1200)
+    };
+  } catch {
+    return { score: 0, visualSpec: "" };
+  }
+}
+
+async function evaluateGeneratedImage(localPath, prompt, spec, referencePaths = []) {
+  const model = await availableOllamaVisionModel();
+  if (!model || !localPath || !fs.existsSync(localPath)) {
+    return { available: false, score: null, issues: [], summary: "Local visual review unavailable." };
+  }
+  const paths = [localPath, ...referencePaths.filter((item) => item && fs.existsSync(item)).slice(0, 2)];
+  const reviewDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-vision-review-"));
+  const expectedCount = Number(spec?.expectedSubjectCount) || 1;
+  try {
+    const preparedPaths = await Promise.all(paths.map((item, index) => (
+      prepareVisionImage(item, path.join(reviewDirectory, `review-${index + 1}.jpg`), 1024)
+    )));
+    const images = preparedPaths.map((item) => fs.readFileSync(item).toString("base64"));
+    const response = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(90000),
+      body: JSON.stringify({
+        model,
+        keep_alive: 0,
+        stream: false,
+        format: "json",
+        options: { temperature: 0 },
+        messages: [{
+          role: "user",
+          content: [
+            `Image 1 is a generated result for: ${String(prompt).slice(0, 260)}.`,
+            images.length > 1 ? "The remaining images are identity references." : "No identity reference is supplied.",
+            `Expected subject count: ${expectedCount}.`,
+            "Reject abstract color blocks, severe stretching, collage layouts, missing subjects, wrong species, merged characters, changed colors/markings, unreadable anatomy, or an image that merely copies one reference while ignoring the request.",
+            "Return JSON only: {\"score\":0-100,\"subjectMatch\":0-100,\"compositionMatch\":0-100,\"referenceMatch\":0-100,\"issues\":[\"specific observed problem\"],\"summary\":\"specific one-sentence verdict\"}. Use an empty issues array only when the result is acceptable; never copy the schema placeholder text."
+          ].join(" "),
+          images
+        }]
+      })
+    });
+    if (!response.ok) {
+      const detail = String(await response.text()).replace(/\s+/g, " ").trim().slice(0, 240);
+      return { available: false, score: null, issues: [], summary: `Visual review failed (${response.status})${detail ? `: ${detail}` : "."}` };
+    }
+    const payload = await response.json();
+    const parsed = parseVisualReviewResponse(payload?.message?.content);
+    if (!parsed) {
+      return { available: false, score: null, issues: [], summary: "Local visual review returned an unreadable response." };
+    }
+    return {
+      available: true,
+      ...parsed
+    };
+  } catch (error) {
+    return { available: false, score: null, issues: [], summary: error instanceof Error ? error.message : String(error) };
+  } finally {
+    fs.rmSync(reviewDirectory, { recursive: true, force: true });
+  }
+}
+
+function quarantineRejectedImage(outputPath) {
+  if (!outputPath || !fs.existsSync(outputPath)) return null;
+  const root = path.dirname(outputPath);
+  const rejectedRoot = path.join(root, "Rejected");
+  fs.mkdirSync(rejectedRoot, { recursive: true });
+  const parsed = path.parse(outputPath);
+  const baseDestination = path.join(rejectedRoot, path.basename(outputPath));
+  const destination = fs.existsSync(baseDestination)
+    ? path.join(rejectedRoot, `${parsed.name}-${Date.now()}${parsed.ext}`)
+    : baseDestination;
+  fs.renameSync(outputPath, destination);
+  return destination;
+}
+
 function memoryIndexPath() {
   return path.join(CHARACTER_MEMORY_ROOT, "index.json");
 }
@@ -360,7 +668,19 @@ function findCharacterMemory(prompt) {
 }
 
 function findKnownReference(prompt) {
+  return findKnownReferences(prompt)[0] ?? null;
+}
+
+function findKnownReferences(prompt) {
   const value = String(prompt ?? "");
+  const requestsBixie = /(辟邪|bixie|pixiu)/i.test(value);
+  const requestsTianlu = /(天禄|tianlu)/i.test(value);
+  if (requestsBixie && requestsTianlu) {
+    const bundledPair = path.join(appRoot, "references", "tianlu_bixie_pair_ref.jpg");
+    const installedPair = path.join(COMFY_INPUT_ROOT, "tianlu_bixie_pair_ref.jpg");
+    const pairPath = [installedPair, bundledPair].find((candidate) => fs.existsSync(candidate));
+    if (pairPath) return [{ pattern: /(辟邪|bixie|pixiu).*(天禄|tianlu)|(天禄|tianlu).*(辟邪|bixie|pixiu)/i, path: pairPath }];
+  }
   const known = [
     {
       pattern: /(辟邪|bixie|pixiu)/i,
@@ -371,7 +691,7 @@ function findKnownReference(prompt) {
       path: path.join(COMFY_INPUT_ROOT, "tianlu_ref.png")
     }
   ];
-  return known.find((item) => item.pattern.test(value) && fs.existsSync(item.path)) ?? null;
+  return known.filter((item) => item.pattern.test(value) && fs.existsSync(item.path));
 }
 
 function saveCharacterMemory(prompt, sourcePath) {
@@ -431,9 +751,10 @@ function removeUploadedReference(uploadedName) {
 async function createReferenceContext(profile, prompt, attachments = [], requiredWorkflowPath = profile.referenceWorkflowPath) {
   if (!fs.existsSync(requiredWorkflowPath)) throw new Error("Reference workflow is not installed.");
   const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-reference-"));
-  let uploadedName = "";
+  const uploadedNames = [];
   try {
     let localPath;
+    let localPaths = [];
     let source = "search";
     const attachment = attachments.find((item) => item?.type === "image" && item?.content);
     if (attachment) {
@@ -441,40 +762,75 @@ async function createReferenceContext(profile, prompt, attachments = [], require
       const extension = mime.includes("jpeg") || mime.includes("jpg") ? ".jpg" : ".png";
       localPath = path.join(tempDirectory, `user-reference${extension}`);
       fs.writeFileSync(localPath, Buffer.from(String(attachment.content), "base64"));
+      localPaths = [localPath];
       source = "user";
     }
-    const known = localPath ? null : findKnownReference(prompt);
-    if (known) {
-      localPath = path.join(tempDirectory, `known-reference${path.extname(known.path) || ".png"}`);
-      fs.copyFileSync(known.path, localPath);
+    const known = localPath ? [] : findKnownReferences(prompt);
+    if (known.length) {
+      if (known.length > 1) {
+        localPaths = known.slice(0, 2).map((item, index) => {
+          const destination = path.join(tempDirectory, `known-reference-${index + 1}${path.extname(item.path) || ".png"}`);
+          fs.copyFileSync(item.path, destination);
+          return destination;
+        });
+        localPath = localPaths[0];
+      } else {
+        localPath = path.join(tempDirectory, `known-reference${path.extname(known[0].path) || ".png"}`);
+        fs.copyFileSync(known[0].path, localPath);
+        localPaths = [localPath];
+      }
       source = "known";
     }
     const memory = localPath ? null : findCharacterMemory(prompt);
     if (memory) {
       localPath = path.join(tempDirectory, `memory-reference${path.extname(memory.path) || ".png"}`);
       fs.copyFileSync(memory.path, localPath);
+      localPaths = [localPath];
       source = "memory";
     }
     const candidates = localPath ? [] : await searchReferenceImage(prompt);
     let lastError;
-    for (const candidate of candidates.slice(0, 5)) {
+    const evaluatedCandidates = [];
+    for (const candidate of candidates.slice(0, 6)) {
       try {
-        localPath = await downloadReferenceImage(candidate, tempDirectory);
-        break;
+        const candidatePath = await downloadReferenceImage(candidate, tempDirectory);
+        const evaluated = await evaluateReferenceImage(candidatePath, prompt);
+        evaluatedCandidates.push({ path: candidatePath, ...evaluated });
+        if (evaluated.score >= 78) break;
       } catch (error) {
         lastError = error;
       }
     }
-    if (!localPath) throw lastError ?? new Error("No downloadable reference image was found.");
-    uploadedName = await uploadReferenceImage(profile.baseUrl, localPath);
-    let visualSpec = "";
-    try {
-      visualSpec = await inspectReferenceImage(localPath, prompt);
-    } catch (error) {
-      console.warn(`[VELA] Vision inspection unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    const selected = selectReferenceCandidate(evaluatedCandidates);
+    if (selected) {
+      localPath = selected.path;
+      localPaths = [selected.path];
+      source = selected.confidence === "verified" ? "verified-search" : "weak-search";
     }
-    return { uploadedName, tempDirectory, localPath, source, visualSpec };
+    if (!localPath) throw lastError ?? new Error("No downloadable reference image was found.");
+    if (!localPaths.length) localPaths = [localPath];
+    for (const referencePath of localPaths) {
+      uploadedNames.push(await uploadReferenceImage(profile.baseUrl, referencePath));
+    }
+    const visualSpecs = await Promise.all(localPaths.map(async (referencePath) => {
+      try {
+        return await inspectReferenceImage(referencePath, prompt);
+      } catch (error) {
+        console.warn(`[VELA] Vision inspection unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        return "";
+      }
+    }));
+    return {
+      uploadedName: uploadedNames[0],
+      uploadedNames,
+      tempDirectory,
+      localPath,
+      localPaths,
+      source,
+      visualSpec: visualSpecs.filter(Boolean).join(" Separate identity reference: ")
+    };
   } catch (error) {
+    uploadedNames.forEach(removeUploadedReference);
     fs.rmSync(tempDirectory, { recursive: true, force: true });
     throw error;
   }
@@ -509,10 +865,16 @@ async function downloadComfyImage(profile, item, tempDirectory) {
 }
 
 async function upscaleGeneratedOutputs(profile, images, settings, route) {
+  const quality = String(settings?.quality ?? "high").toLowerCase();
+  if (quality === "standard") {
+    const base = imageDimensions(settings);
+    return { images, ...base, resolution: "HD", upscaled: false };
+  }
   const modelName = route === "anime" ? "RealESRGAN_x4plus_anime_6B.pth" : "RealESRGAN_x4plus.pth";
   const modelPath = path.join(COMFY_UPSCALE_ROOT, modelName);
-  const targets = imageOutputDimensions(settings);
-  if (!fs.existsSync(modelPath) || !images.length) {
+  const useAiUpscaler = quality === "ultra" && fs.existsSync(modelPath);
+  const targets = imageOutputDimensions(settings, useAiUpscaler ? "4k" : "2k");
+  if (!images.length) {
     return { images, ...targets, resolution: "base", upscaled: false };
   }
 
@@ -525,7 +887,7 @@ async function upscaleGeneratedOutputs(profile, images, settings, route) {
       const sourcePath = await downloadComfyImage(profile, source, tempDirectory);
       const uploadedName = await uploadReferenceImage(profile.baseUrl, sourcePath);
       uploadedNames.push(uploadedName);
-      const workflow = {
+      const workflow = useAiUpscaler ? {
         "1": {
           inputs: { image: uploadedName },
           class_type: "LoadImage"
@@ -550,6 +912,25 @@ async function upscaleGeneratedOutputs(profile, images, settings, route) {
         },
         "5": {
           inputs: { filename_prefix: "VELA-4K", images: ["4", 0] },
+          class_type: "SaveImage"
+        }
+      } : {
+        "1": {
+          inputs: { image: uploadedName },
+          class_type: "LoadImage"
+        },
+        "4": {
+          inputs: {
+            image: ["1", 0],
+            upscale_method: "lanczos",
+            width: targets.width,
+            height: targets.height,
+            crop: "disabled"
+          },
+          class_type: "ImageScale"
+        },
+        "5": {
+          inputs: { filename_prefix: "VELA-2K", images: ["4", 0] },
           class_type: "SaveImage"
         }
       };
@@ -577,13 +958,20 @@ async function upscaleGeneratedOutputs(profile, images, settings, route) {
             resultImages.push(...output.filter((item) => item?.filename));
             break;
           }
-          if (record?.status?.status_str === "error") throw new Error("ComfyUI reported an upscale error.");
+          if (record?.status?.status_str === "error") {
+            throw comfyExecutionError(record, "ComfyUI reported an upscale error");
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, Math.max(300, profile.pollIntervalMs)));
       }
       if (!resultImages.length) throw new Error("ComfyUI upscale timed out.");
     }
-    return { images: resultImages, ...targets, resolution: "4K", upscaled: true };
+    return {
+      images: resultImages,
+      ...targets,
+      resolution: useAiUpscaler ? "4K" : "2K",
+      upscaled: true
+    };
   } finally {
     uploadedNames.forEach(removeUploadedReference);
     fs.rmSync(tempDirectory, { recursive: true, force: true });
@@ -594,27 +982,222 @@ function throwIfImageCancelled(job = activeImageJob) {
   if (job?.cancelled) throw new Error("Image generation cancelled.");
 }
 
+function comfyExecutionError(record, fallbackMessage) {
+  const messages = Array.isArray(record?.status?.messages) ? [...record.status.messages].reverse() : [];
+  for (const entry of messages) {
+    const [event, detail] = Array.isArray(entry) ? entry : [];
+    if (event === "execution_interrupted") {
+      return new Error("ComfyUI generation was interrupted. Wait for the current task to stop before starting another image.");
+    }
+    if (event === "execution_error") {
+      const reason = String(detail?.exception_message ?? detail?.exception_type ?? "").trim();
+      const node = String(detail?.node_type ?? detail?.node_id ?? "").trim();
+      return new Error(`${fallbackMessage}${node ? ` (${node})` : ""}${reason ? `: ${reason}` : ""}`);
+    }
+  }
+  return new Error(fallbackMessage);
+}
+
 async function interruptActiveImageJob() {
   if (!activeImageJob) return false;
   activeImageJob.cancelled = true;
+  activeImageJob.controller?.abort(new Error("Image generation cancelled."));
+  if (activeImageJob.worker && !activeImageJob.worker.killed) {
+    activeImageJob.worker.kill();
+    return true;
+  }
   try {
-    const profile = activeImageJob.baseUrl;
-    await fetch(`${profile}/interrupt`, { method: "POST", signal: AbortSignal.timeout(2500) });
+    if (activeImageJob.promptId) {
+      const profile = activeImageJob.baseUrl;
+      await fetch(`${profile}/interrupt`, { method: "POST", signal: AbortSignal.timeout(2500) });
+    }
   } catch {
     // The local job is still marked cancelled; ComfyUI may already have finished.
   }
   return true;
 }
 
-async function generateComfyImage(config, prompt, settings = {}, attachments = []) {
-  const imageJob = { promptId: "", phase: "preparing", cancelled: false, baseUrl: "" };
+async function generateNativeImage(prompt, settings = {}, attachments = []) {
+  if (!nativeImageEngineAvailable()) {
+    throw new Error("VELA native image engine is not installed correctly.");
+  }
+  const spec = analyzeImageRequest(prompt, settings, attachments);
+  const engine = spec.engine === "flux2" ? "anime" : spec.engine;
+  const jobId = crypto.randomUUID();
+  const imageJob = {
+    promptId: `native-${jobId}`,
+    phase: "analyzing-request",
+    startedAt: Date.now(),
+    workflow: publicWorkflowSummary(spec),
+    cancelled: false,
+    worker: null,
+    controller: new AbortController()
+  };
+  activeImageJob = imageJob;
+  let referenceDirectory = "";
+  try {
+    imageJob.phase = "compiling-spec";
+    const preparedPrompt = await prepareImagePrompt(prompt, spec);
+    throwIfImageCancelled(imageJob);
+    let nativeAttachments = attachments.filter((item) => item?.type === "image" && item?.content).slice(0, 2);
+    const localReferencePaths = [];
+    let visualSpec = "";
+    let referenceSource = nativeAttachments.length ? "user" : "";
+    let referenceScore = nativeAttachments.length ? 100 : null;
+    const wantsReference = spec.needsReference && settings?.reference !== "off";
+    if (wantsReference && !nativeAttachments.length) {
+      imageJob.phase = "reference-search";
+      referenceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-native-reference-"));
+      let localPath = "";
+      const known = findKnownReferences(prompt);
+      const memory = known.length ? null : findCharacterMemory(prompt);
+      if (known.length || memory) {
+        const sources = known.length ? known.map((item) => item.path) : [memory.path];
+        const copied = sources.map((sourcePath, index) => {
+          const destination = path.join(referenceDirectory, `reference-${index + 1}${path.extname(sourcePath) || ".png"}`);
+          fs.copyFileSync(sourcePath, destination);
+          return destination;
+        });
+        localPath = copied[0];
+        localReferencePaths.push(...copied);
+        referenceSource = known.length ? "known" : "memory";
+        referenceScore = 100;
+      } else {
+        const candidates = await searchReferenceImage(prompt, spec);
+        let lastError;
+        const evaluatedCandidates = [];
+        for (const candidate of candidates.slice(0, 6)) {
+          throwIfImageCancelled(imageJob);
+          try {
+            const candidatePath = await downloadReferenceImage(candidate, referenceDirectory);
+            imageJob.phase = "reference-validation";
+            const evaluated = await evaluateReferenceImage(candidatePath, prompt);
+            evaluatedCandidates.push({ path: candidatePath, ...evaluated });
+            if (evaluated.score >= 78) break;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        const best = selectReferenceCandidate(evaluatedCandidates);
+        if (best) {
+          localPath = best.path;
+          visualSpec = best.visualSpec;
+          referenceScore = best.score;
+          referenceSource = best.confidence === "verified" ? "verified-search" : "weak-search";
+          localReferencePaths.push(best.path);
+        }
+        if (!localPath && settings?.reference === "strict") {
+          throw lastError ?? new Error("No verified reference image was found for strict identity mode.");
+        }
+        if (!localPath) referenceSource = "text-fallback";
+      }
+      throwIfImageCancelled(imageJob);
+      if (localPath && !visualSpec) {
+        imageJob.phase = "reference-vision";
+        visualSpec = await inspectReferenceImage(localPath, prompt).catch(() => "");
+      }
+      if (localPath && spec.referenceMode !== "visual-research") {
+        const selectedReferences = localReferencePaths.length ? localReferencePaths : [localPath];
+        nativeAttachments = selectedReferences.slice(0, 2).map((referencePath) => ({
+          type: "image",
+          mimeType: path.extname(referencePath).toLowerCase() === ".png" ? "image/png" : "image/jpeg",
+          fileName: path.basename(referencePath),
+          content: fs.readFileSync(referencePath).toString("base64")
+        }));
+        if (settings?.memory !== "once" && referenceSource === "verified-search" && Number(referenceScore) >= 68) {
+          saveCharacterMemory(prompt, localPath);
+        }
+      }
+    }
+    if (nativeAttachments.length && !localReferencePaths.length) {
+      if (!referenceDirectory) referenceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-native-reference-"));
+      nativeAttachments.forEach((attachment, index) => {
+        const raw = String(attachment.content ?? "").replace(/^data:[^,]+,/, "");
+        if (!raw) return;
+        const extension = String(attachment.mimeType ?? "").includes("jpeg") ? ".jpg" : ".png";
+        const referencePath = path.join(referenceDirectory, `user-reference-${index + 1}${extension}`);
+        fs.writeFileSync(referencePath, Buffer.from(raw, "base64"));
+        localReferencePaths.push(referencePath);
+      });
+    }
+    imageJob.phase = "prompt-compilation";
+    const nativePrompt = compileImagePrompt(spec, preparedPrompt, visualSpec, nativeAttachments.length > 0);
+    imageJob.compiled = {
+      engine,
+      referenceSource: referenceSource || null,
+      referenceScore,
+      promptLength: nativePrompt.length
+    };
+    imageJob.phase = "loading-model";
+    if (!(await ensureNativeImageEngine())) throw new Error("VELA native image engine could not start.");
+    throwIfImageCancelled(imageJob);
+    imageJob.worker = nativeImageProcess;
+    const maxAttempts = spec.subjectType === "character" || nativeAttachments.length ? 2 : 1;
+    const minimumScore = nativeAttachments.length ? 70 : 55;
+    let lastReview = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      throwIfImageCancelled(imageJob);
+      if (!(await ensureNativeImageEngine())) throw new Error("VELA native image engine could not restart.");
+      imageJob.worker = nativeImageProcess;
+      imageJob.phase = attempt === 1 ? "generating" : "retrying-quality";
+      const response = await fetch(`http://${APP_HOST}:${NATIVE_IMAGE_PORT}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: nativePrompt,
+          settings: { ...settings, seed: null, engine, negativePrompt: compileNegativePrompt(spec, settings) },
+          attachments: nativeAttachments
+        }),
+        signal: AbortSignal.any([imageJob.controller.signal, AbortSignal.timeout(1200000)])
+      });
+      const payload = await response.json();
+      if (!payload?.ok) throw new Error(String(payload?.error ?? "Native image generation failed."));
+      const outputPath = String(payload?.result?.outputs?.[0]?.path ?? "");
+      imageJob.phase = "validating-output";
+      await releaseNativeImageEngineForReview(imageJob);
+      const review = await evaluateGeneratedImage(outputPath, prompt, spec, localReferencePaths);
+      lastReview = review;
+      const splitPanelDetected = payload?.result?.qualityChecks?.splitPanelDetected === true;
+      const requiresSemanticReview = nativeAttachments.length > 0 || spec.subjectType === "character";
+      const accepted = !splitPanelDetected
+        && (review.available ? Number(review.score) >= minimumScore : !requiresSemanticReview);
+      if (accepted) {
+        imageJob.phase = "finalizing-output";
+        return {
+          ...payload.result,
+          requestedEngine: spec.engine,
+          referenceSource: referenceSource || null,
+          referenceScore,
+          semanticReview: review,
+          generationAttempts: attempt,
+          workflow: publicWorkflowSummary(spec)
+        };
+      }
+      quarantineRejectedImage(outputPath);
+    }
+    const reasons = lastReview?.issues?.length ? lastReview.issues.join("；") : lastReview?.summary;
+    throw new Error(`Generated image failed semantic quality review${reasons ? `: ${reasons}` : "."}`);
+  } catch (error) {
+    if (imageJob.cancelled) throw new Error("Image generation cancelled.");
+    throw error;
+  } finally {
+    if (referenceDirectory) fs.rmSync(referenceDirectory, { recursive: true, force: true });
+    if (activeImageJob === imageJob) activeImageJob = null;
+  }
+}
+
+async function generateComfyImage(config, prompt, settings = {}, attachments = [], spec = null) {
+  const imageJob = {
+    promptId: "",
+    phase: "preparing",
+    startedAt: Date.now(),
+    cancelled: false,
+    baseUrl: ""
+  };
   activeImageJob = imageJob;
   const profile = readComfyProfile(config);
   imageJob.baseUrl = profile.baseUrl;
-  const requestedEngine = imageEngine(settings);
-  const engine = requestedEngine === "anime" && /(有兽焉|辟邪|bixie|pixiu|天禄|tianlu)/i.test(prompt)
-    ? "flux2"
-    : requestedEngine;
+  const engine = imageEngine(settings);
   const hasUserReference = attachments.some((item) => item?.type === "image" && item?.content);
   const hasKnownReference = Boolean(findKnownReference(prompt));
   const hasMemoryReference = Boolean(findCharacterMemory(prompt));
@@ -624,12 +1207,14 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
   );
   let referenceContext;
   let uploadedReferenceName = "";
+  let uploadedReferenceNames = [];
   try {
     throwIfImageCancelled(imageJob);
     if (useReference && fs.existsSync(referenceWorkflowPath)) {
       imageJob.phase = "reference";
       referenceContext = await createReferenceContext(profile, prompt, attachments, referenceWorkflowPath);
       uploadedReferenceName = referenceContext.uploadedName;
+      uploadedReferenceNames = referenceContext.uploadedNames ?? [uploadedReferenceName].filter(Boolean);
     }
   } catch (error) {
     if (imageJob.cancelled) throw error;
@@ -650,12 +1235,20 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
     if (activeImageJob === imageJob) activeImageJob = null;
     throw new Error(`ComfyUI prompt node ${profile.promptNodeId} is invalid.`);
   }
+  imageJob.phase = "prompt";
+  const preparedPrompt = await prepareImagePrompt(prompt, spec);
+  throwIfImageCancelled(imageJob);
   const route = engine === "realistic" ? "realistic" : imageRoute(prompt, settings);
-  node.inputs[promptInputName] = engine === "flux2"
-    ? routedFluxPrompt(prompt, referenceContext?.visualSpec ?? "")
-    : routedImagePrompt(prompt, route, referenceContext?.visualSpec ?? "");
+  node.inputs[promptInputName] = spec && engine !== "flux2"
+    ? compileImagePrompt(spec, preparedPrompt, referenceContext?.visualSpec ?? "", Boolean(referenceContext))
+    : engine === "flux2"
+      ? routedFluxPrompt(preparedPrompt, referenceContext?.visualSpec ?? "", Boolean(referenceContext), prompt)
+      : routedImagePrompt(preparedPrompt, route, referenceContext?.visualSpec ?? "", Boolean(referenceContext), prompt);
   const { width, height } = imageDimensions(settings);
   const steps = imageSteps(settings, engine);
+  if (spec && workflow["7"]?.inputs) {
+    workflow["7"].inputs.text = compileNegativePrompt(spec, settings);
+  }
   if (engine === "flux2") {
     workflow["7"].inputs.steps = steps;
     workflow["7"].inputs.width = width;
@@ -669,6 +1262,7 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
     }
   } else {
     if (workflow["3"]?.inputs) workflow["3"].inputs.steps = steps;
+    if (workflow["3"]?.inputs) workflow["3"].inputs.seed = crypto.randomInt(1, 2147483647);
     if (workflow["5"]?.inputs) {
       workflow["5"].inputs.width = width;
       workflow["5"].inputs.height = height;
@@ -683,8 +1277,27 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
         : "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors";
   }
   if (referenceContext && workflow?.[profile.referenceImageNodeId]?.inputs) {
-    workflow[profile.referenceImageNodeId].inputs.image = uploadedReferenceName;
-    if (workflow["10"]?.inputs) {
+    if (uploadedReferenceNames.length > 1) {
+      const regionalPrompts = Array.isArray(spec?.knownCharacters)
+        ? spec.knownCharacters.slice(0, 2).map((character, index) => [
+            index === 0 ? "left side" : "right side",
+            character.prompt,
+            "full body visible, standing naturally",
+            "one continuous bamboo forest scene",
+            "clean official-style anime linework"
+          ].join(", "))
+        : [];
+      configureMultiReferenceIpAdapter(workflow, uploadedReferenceNames, {
+        weight: 0.72,
+        endAt: 0.82,
+        width,
+        height,
+        regionalPrompts
+      });
+    } else {
+      workflow[profile.referenceImageNodeId].inputs.image = uploadedReferenceName;
+    }
+    if (workflow["10"]?.inputs && uploadedReferenceNames.length === 1) {
       workflow["10"].inputs.weight = settings.reference === "strict" ? 1.0 : 0.86;
       workflow["10"].inputs.end_at = 1.0;
       workflow["10"].inputs.weight_type = "standard";
@@ -724,6 +1337,7 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
             route,
             referenceUsed: Boolean(referenceContext),
             referenceSource: referenceContext?.source ?? "none",
+            referenceCount: uploadedReferenceNames.length,
             width: upscaled.width,
             height: upscaled.height,
             resolution: upscaled.resolution,
@@ -738,16 +1352,57 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
             })
           };
         }
-        if (record?.status?.status_str === "error") throw new Error("ComfyUI reported a generation error.");
+          if (record?.status?.status_str === "error") {
+            throw comfyExecutionError(record, "ComfyUI reported a generation error");
+          }
       }
       await new Promise((resolve) => setTimeout(resolve, Math.max(250, profile.pollIntervalMs)));
     }
     throw new Error(`ComfyUI generation timed out after ${Math.round(profile.timeoutMs / 1000)} seconds.`);
   } finally {
-    if (uploadedReferenceName) removeUploadedReference(uploadedReferenceName);
+    uploadedReferenceNames.forEach(removeUploadedReference);
     if (referenceContext?.tempDirectory) fs.rmSync(referenceContext.tempDirectory, { recursive: true, force: true });
     if (activeImageJob === imageJob) activeImageJob = null;
   }
+}
+
+async function generateVerifiedMultiCharacterImage(config, prompt, settings, attachments, spec) {
+  const comfySettings = { ...settings, engine: "flux2", reference: "smart", quality: settings?.quality ?? "high" };
+  if (!(await ensureComfyUi())) throw new Error("VELA high-fidelity reference backend could not start.");
+  const result = await generateComfyImage(config, prompt, comfySettings, attachments, spec);
+  const profile = readComfyProfile(config);
+  try {
+    await fetch(`${profile.baseUrl}/free`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unload_models: true, free_memory: true }),
+      signal: AbortSignal.timeout(10000)
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  } catch {
+    // Review still runs and will fail closed if memory is unavailable.
+  }
+  const outputPath = String(result?.outputs?.[0]?.path ?? "");
+  const references = findKnownReferences(prompt).map((item) => item.path);
+  let review;
+  try {
+    review = await evaluateGeneratedImage(outputPath, prompt, spec, references);
+  } catch (error) {
+    for (const output of result.outputs ?? []) quarantineRejectedImage(String(output?.path ?? ""));
+    const concise = String(error instanceof Error ? error.message : error).split(/\r?\n/, 1)[0].slice(0, 240);
+    throw new Error(`High-fidelity image review could not complete${concise ? `: ${concise}` : "."}`);
+  }
+  if (!review.available || Number(review.score) < 72) {
+    for (const output of result.outputs ?? []) quarantineRejectedImage(String(output?.path ?? ""));
+    const reasons = review?.issues?.length ? review.issues.join("；") : review?.summary;
+    throw new Error(`High-fidelity image failed visual review${reasons ? `: ${reasons}` : "."}`);
+  }
+  return {
+    ...result,
+    semanticReview: review,
+    generationAttempts: 1,
+    workflow: publicWorkflowSummary(spec)
+  };
 }
 
 function gatewayIsAvailable(port) {
@@ -815,12 +1470,77 @@ function startComfyUi() {
   return true;
 }
 
+function startNativeImageEngine() {
+  if (!nativeImageEngineAvailable()) return false;
+  const logRoot = path.join(COMFY_OUTPUT_ROOT, "VELA-Native");
+  fs.mkdirSync(logRoot, { recursive: true });
+  const child = spawn(
+    NATIVE_IMAGE_PYTHON,
+    [nativeImageWorkerPath(), "--server", String(NATIVE_IMAGE_PORT)],
+    {
+      cwd: OCU_PROJECT_ROOT,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        HF_HOME: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache",
+        HF_HUB_CACHE: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache\\hub",
+        TRANSFORMERS_CACHE: "D:\\AI-Models-HotCache\\VELA-ImageEngine\\cache\\transformers",
+        HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      },
+      stdio: [
+        "ignore",
+        fs.openSync(path.join(logRoot, "native-engine.log"), "a"),
+        fs.openSync(path.join(logRoot, "native-engine-error.log"), "a")
+      ]
+    }
+  );
+  nativeImageProcess = child;
+  child.once("exit", () => {
+    if (activeImageJob?.worker === child && !activeImageJob.cancelled) {
+      activeImageJob.controller?.abort(new Error("VELA image worker exited before completing the request."));
+    }
+    if (nativeImageProcess === child) nativeImageProcess = null;
+  });
+  return true;
+}
+
+async function ensureNativeImageEngine() {
+  if (await gatewayIsAvailable(NATIVE_IMAGE_PORT)) return true;
+  if (nativeImageStartPromise) return nativeImageStartPromise;
+  nativeImageStartPromise = (async () => {
+    if (!startNativeImageEngine()) return false;
+    for (let attempt = 0; attempt < 360; attempt += 1) {
+      if (await gatewayIsAvailable(NATIVE_IMAGE_PORT)) return true;
+      if (!nativeImageProcess) return false;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  })();
+  try {
+    return await nativeImageStartPromise;
+  } finally {
+    nativeImageStartPromise = null;
+  }
+}
+
+async function releaseNativeImageEngineForReview(imageJob) {
+  const child = nativeImageProcess;
+  if (!child || child.killed) return;
+  // The local vision reviewer also needs several GB of memory. Release SDXL
+  // before review so a low-memory machine does not silently skip validation.
+  if (imageJob?.worker === child) imageJob.worker = null;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill();
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  if (nativeImageProcess === child) nativeImageProcess = null;
+}
+
 async function ensureComfyUi() {
   if (await gatewayIsAvailable(COMFY_PORT)) return true;
   if (comfyStartPromise) return comfyStartPromise;
   comfyStartPromise = (async () => {
     if (!startComfyUi()) return false;
-    for (let attempt = 0; attempt < 60; attempt += 1) {
+    for (let attempt = 0; attempt < 360; attempt += 1) {
       if (await gatewayIsAvailable(COMFY_PORT)) return true;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -835,8 +1555,15 @@ async function ensureComfyUi() {
 
 async function ensureGateway(port) {
   if (await gatewayIsAvailable(port)) return;
+  // The Windows scheduled task may already be starting the gateway. Give it a
+  // short grace period before spawning another CLI process, otherwise VELA and
+  // the supervisor race and leave a second high-memory gateway process behind.
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (await gatewayIsAvailable(port)) return;
+  }
   await startGateway();
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     if (await gatewayIsAvailable(port)) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -1014,22 +1741,27 @@ function createServer(openClaw) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        const [gateway, comfy, ollama, ocu] = await Promise.all([
+        const [gateway, ollama, ocu] = await Promise.all([
           gatewayIsAvailable(openClaw.port),
-          gatewayIsAvailable(COMFY_PORT),
           readOllamaHealth(),
           gatewayIsAvailable(OCU_PORT)
         ]);
+        const nativeImage = nativeImageEngineAvailable();
         sendJson(res, 200, {
-          ok: gateway && comfy && ollama.state === "online",
+          ok: gateway && nativeImage && ollama.state === "online",
           release: VELA_RELEASE,
           services: {
             gateway: { state: gateway ? "online" : "offline", port: openClaw.port },
-            comfy: { state: comfy ? "online" : "offline", port: COMFY_PORT },
+            comfy: { state: nativeImage ? "online" : "offline", port: null, backend: "vela-native" },
             ollama: { state: ollama.state, models: ollama.count, port: 11434 },
             ocu: { state: ocu ? "online" : "offline", port: OCU_PORT }
           },
           resources: resourceSnapshot(),
+          learning: {
+            mode: "controlled-local",
+            characterMemories: readCharacterMemory().length,
+            autonomousTraining: false
+          },
           imageJob: activeImageJob
             ? { phase: activeImageJob.phase, promptId: activeImageJob.promptId, cancellable: true }
             : null
@@ -1058,14 +1790,37 @@ function createServer(openClaw) {
           sendJson(res, 400, { error: "Image prompt is empty." });
           return;
         }
-        if (!(await ensureComfyUi())) {
-          sendJson(res, 503, { error: "ComfyUI is unavailable. Image generation was not started." });
+        if (activeImageJob && imageJobIsStale(activeImageJob)) {
+          const staleJob = activeImageJob;
+          await interruptActiveImageJob();
+          if (activeImageJob === staleJob) activeImageJob = null;
+          console.warn(`[VELA] Recovered stale image job (${staleJob.phase || "unknown"}).`);
+        }
+        if (activeImageJob) {
+          sendJson(res, 409, {
+            error: `Another image is still ${activeImageJob.phase || "running"}. Wait for it to finish or stop it before starting a new one.`
+          });
           return;
         }
-        const config = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
         const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
         const attachments = Array.isArray(payload?.attachments) ? payload.attachments.slice(0, 2) : [];
-        sendJson(res, 200, await generateComfyImage(config, prompt, settings, attachments));
+        const knowledgeDownloadPaused = await setKnowledgeDownloadPaused(true);
+        try {
+          const spec = analyzeImageRequest(prompt, settings, attachments);
+          const knownCharacterCount = Array.isArray(spec.knownCharacters) ? spec.knownCharacters.length : 0;
+          if (knownCharacterCount > 1) {
+            const config = JSON.parse(fs.readFileSync(openClaw.configPath, "utf8"));
+            sendJson(
+              res,
+              200,
+              await generateVerifiedMultiCharacterImage(config, prompt, settings, attachments, spec)
+            );
+          } else {
+            sendJson(res, 200, await generateNativeImage(prompt, settings, attachments));
+          }
+        } finally {
+          if (knowledgeDownloadPaused) await setKnowledgeDownloadPaused(false);
+        }
         return;
       }
 
@@ -1103,22 +1858,18 @@ function createServer(openClaw) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        try {
-          const queue = await requestComfyJson("/queue");
-          const running = Array.isArray(queue?.queue_running) ? queue.queue_running : [];
-          const pending = Array.isArray(queue?.queue_pending) ? queue.queue_pending : [];
-          sendJson(res, 200, {
-            online: true,
-            running: running.length,
-            pending: pending.length,
-            runningPromptId: running[0]?.[1] ?? "",
-            pendingPromptId: pending[0]?.[1] ?? "",
-            activePhase: activeImageJob?.phase ?? "",
-            cancellable: Boolean(activeImageJob)
-          });
-        } catch {
-          sendJson(res, 200, { online: false, running: 0, pending: 0 });
-        }
+        sendJson(res, 200, {
+          online: nativeImageEngineAvailable(),
+          running: activeImageJob ? 1 : 0,
+          pending: 0,
+          runningPromptId: activeImageJob?.promptId ?? "",
+          pendingPromptId: "",
+          activePhase: activeImageJob?.phase ?? "",
+          workflow: activeImageJob?.workflow ?? null,
+          compiled: activeImageJob?.compiled ?? null,
+          cancellable: Boolean(activeImageJob),
+          backend: "vela-native"
+        });
         return;
       }
 
@@ -1237,7 +1988,11 @@ function createServer(openClaw) {
           ].join("; ")
         );
       }
-      streamFile(req, res, staticPath, true);
+      // Renderer modules define request routing and must never survive an app
+      // upgrade in Chromium's disk cache. A stale intents.js caused explicit
+      // image requests to be sent to the chat agent after the fix was already
+      // packaged. Vendor dependencies remain cacheable above.
+      streamFile(req, res, staticPath, false);
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
     }
@@ -1251,7 +2006,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 650,
     show: false,
-    backgroundColor: "#09090a",
+    backgroundColor: "#f4f4f2",
     icon: path.join(appRoot, "build", "vela-icon.ico"),
     title: "VELA",
     titleBarStyle: "hidden",
@@ -1281,7 +2036,19 @@ function createWindow() {
       void shell.openExternal(url);
     }
   });
-  window.once("ready-to-show", () => window.show());
+  const revealWindow = () => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show();
+  };
+  const revealTimer = setTimeout(revealWindow, 3000);
+  revealTimer.unref?.();
+  window.once("ready-to-show", () => {
+    clearTimeout(revealTimer);
+    revealWindow();
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+    console.error(`VELA renderer failed to load (${errorCode}): ${errorDescription}`);
+    revealWindow();
+  });
   void window.loadURL(`${localOrigin}/?appKey=${appKey}`);
   return window;
 }
@@ -1290,6 +2057,8 @@ let server;
 let ocuProcess = null;
 let ocuStartPromise = null;
 let comfyStartPromise = null;
+let nativeImageProcess = null;
+let nativeImageStartPromise = null;
 let activeImageJob = null;
 
 function requestOcuJson(requestPath, method = "GET", payload = null, timeoutMs = 5000) {
@@ -1421,7 +2190,9 @@ if (!hasLock) {
       server = createServer(openClaw);
       server.on("error", (error) => {
         console.error(error);
-        dialog.showErrorBox("VELA", "本地应用端口被占用，请关闭旧的 VELA 窗口后重试。");
+        // A stale or already-running desktop process can briefly retain the
+        // local port. Avoid a repeating modal loop; the single-instance path
+        // above already focuses a healthy existing window.
         app.quit();
       });
       server.listen(APP_PORT, APP_HOST, () => createWindow());

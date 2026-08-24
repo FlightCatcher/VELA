@@ -728,11 +728,21 @@ select {
 }
 
 .message-avatar {
-  color: #fff !important;
-  background: #151515 !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
-  border-radius: 11px !important;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15) !important;
+  color: var(--apple-ink) !important;
+  background: color-mix(in srgb, var(--liquid-glass-strong) 86%, transparent) !important;
+  border: 1px solid var(--apple-line) !important;
+  border-radius: 50% !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08), inset 0 1px var(--apple-highlight) !important;
+}
+
+.vela-glyph {
+  width: 66%;
+  height: 66%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .message-row--user .message-body {
@@ -974,10 +984,26 @@ select {
 }
 
 button:focus-visible,
-textarea:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--apple-ink) !important;
   outline-offset: 3px !important;
+}
+
+/* The textarea fills the composer, so a native focus outline looks like a
+   stray black rectangle. The parent composer already provides the focus cue. */
+textarea:focus-visible {
+  outline: none !important;
+}
+
+#composer-input,
+#composer-input:focus,
+#composer-input:focus-visible {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
 /* Motion language */
@@ -1853,4 +1879,46 @@ select:focus-visible {
   0% { transform: translateX(-62px); opacity: 0; }
   30% { opacity: 1; }
   100% { transform: translateX(62px); opacity: 0; }
+}
+
+/* VELA 2.0 performance pass: keep motion on compositor-only properties.
+   Large continuously blurred layers caused keystroke latency on mid-range GPUs. */
+.app-shell::before,
+.app-shell::after,
+.command-deck::after,
+.composer::after {
+  animation: none !important;
+}
+
+.titlebar,
+.chat-header,
+.sidebar,
+.command-deck,
+.composer,
+.image-studio {
+  -webkit-backdrop-filter: blur(16px) saturate(112%) !important;
+  backdrop-filter: blur(16px) saturate(112%) !important;
+}
+
+#composer-input {
+  field-sizing: content;
+  height: auto !important;
+  min-height: 26px;
+  max-height: 180px;
+  contain: style;
+  will-change: auto;
+}
+
+.composer:focus-within {
+  transform: translateZ(0);
+}
+
+:root[data-theme="light"] .message-avatar,
+:root[data-theme="dark"] .message-avatar,
+.message-avatar {
+  color: var(--apple-ink) !important;
+  background: color-mix(in srgb, var(--liquid-glass-strong) 90%, transparent) !important;
+  border: 1px solid var(--apple-line) !important;
+  border-radius: 50% !important;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.07), inset 0 1px var(--apple-highlight) !important;
 }

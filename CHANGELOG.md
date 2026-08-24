@@ -1,5 +1,16 @@
 # Changelog
 
+## VELA Agent 1.0 capability completion - 2026-08-24
+
+- Completed structured failure reflection with persisted error context and recovery advice.
+- Enforced bounded retry: one policy-approved timeout retry, with duplicate-error protection.
+- Added versioned replanning candidates and approval-gated child plans that preserve the parent.
+- Added true in-flight cancellation, consecutive-task isolation and restart recovery for plans.
+- Added unfamiliar-character identity extraction, automatic reference search, local visual
+  scoring, confidence-based selection, transient reference cleanup and stable fallback behavior.
+- Added image-job leases so stale or cancelled jobs no longer block every later generation.
+- Expanded automated coverage to the complete agent lifecycle and desktop image workflow.
+
 ## VELA 1.2.0 — life connectors - 2026-08-04
 
 - Added a local Home Assistant connector for Xiaomi Home, Matter and other normalized smart-home entities.

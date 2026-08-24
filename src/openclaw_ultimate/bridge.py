@@ -14,11 +14,13 @@ from openclaw_ultimate.planner import (
     ErrorContext,
     PlanExecutor,
     ReflectionEngine,
+    ReplanningEngine,
     SQLitePlanStore,
     StepStatus,
     StructuredPlanner,
 )
 from openclaw_ultimate.rag import (
+    KiwixKnowledgeClient,
     SQLiteKnowledgeStore,
     build_knowledge_base,
 )
@@ -44,6 +46,11 @@ async def handle_request(
 
     if action == "knowledge_status":
         stats = SQLiteKnowledgeStore(current_settings.knowledge_db_path).stats()
+        kiwix = KiwixKnowledgeClient(
+            base_url=current_settings.knowledge_kiwix_base_url,
+            timeout=current_settings.knowledge_kiwix_timeout,
+            result_limit=current_settings.knowledge_kiwix_result_limit,
+        )
         return _success(
             action,
             {
@@ -52,6 +59,12 @@ async def handle_request(
                 "documents": stats.document_count,
                 "chunks": stats.chunk_count,
                 "last_indexed_at": stats.last_indexed_at,
+                "offline_encyclopedia_enabled": current_settings.knowledge_kiwix_enabled,
+                "offline_encyclopedia_available": (
+                    await kiwix.is_available()
+                    if current_settings.knowledge_kiwix_enabled
+                    else False
+                ),
             },
         )
 
@@ -147,7 +160,7 @@ async def handle_request(
         plan_id = _required_text(payload, "plan_id")
         plan = store.get(plan_id)
         failed_steps = tuple(step for step in plan.steps if step.status == StepStatus.FAILED)
-        reflections = []
+        reflection_payloads: list[dict[str, Any]] = []
 
         for step in failed_steps:
             reflection = ReflectionEngine().reflect(
@@ -161,15 +174,69 @@ async def handle_request(
                 ),
             )
             store.save_reflection(reflection)
-            reflections.append(asdict(reflection))
+            reflection_payloads.append(asdict(reflection))
 
         return _success(
             action,
             {
                 "plan_id": plan.id,
-                "reflections": reflections,
-                "reflection_count": len(reflections),
+                "reflections": reflection_payloads,
+                "reflection_count": len(reflection_payloads),
             },
+        )
+
+    if action == "plan_revise":
+        plan_id = _required_text(payload, "plan_id")
+        plan = store.get(plan_id)
+        saved_reflections = store.list_reflections(plan_id=plan.id)
+        latest_by_step = {item.step_id: item for item in saved_reflections}
+        existing = store.list_revisions(plan_id=plan.id)
+        next_number = len(existing) + 1
+        revision_payloads: list[dict[str, Any]] = []
+        engine = ReplanningEngine()
+        for reflection in latest_by_step.values():
+            try:
+                revision = engine.propose(
+                    plan=plan,
+                    reflection=reflection,
+                    revision_number=next_number,
+                )
+            except ValueError:
+                continue
+            store.save_revision(revision)
+            revision_payloads.append(asdict(revision))
+            next_number += 1
+        return _success(
+            action,
+            {
+                "plan_id": plan.id,
+                "revisions": revision_payloads,
+                "revision_count": len(revision_payloads),
+            },
+        )
+
+    if action == "plan_apply":
+        if payload.get("approved") is not True:
+            raise ValueError("Applying a plan revision requires approved=true.")
+        revision_id = _required_text(payload, "revision_id")
+        revision = store.get_revision(revision_id)
+        parent = store.get(revision.parent_plan_id)
+        child = ReplanningEngine().apply(plan=parent, revision=revision)
+        store.save(child)
+        applied = store.update_revision_applied(
+            revision_id=revision.revision_id,
+            child_plan_id=child.id,
+        )
+        return _success(
+            action,
+            {"parent_plan_id": parent.id, "child_plan": _serialize_plan(child), "revision": asdict(applied)},
+        )
+
+    if action == "plan_recover":
+        recovered = store.recover_interrupted_plans()
+        return _success(
+            action,
+            {"recovered_count": len(recovered), "plans": [_serialize_plan(item) for item in recovered]},
         )
 
     raise ValueError(f"Unsupported bridge action: {action}")

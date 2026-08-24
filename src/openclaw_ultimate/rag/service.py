@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
@@ -10,6 +11,7 @@ from openclaw_ultimate.rag.extractors import (
     DocumentExtractionError,
     DocumentExtractor,
 )
+from openclaw_ultimate.rag.kiwix import KiwixKnowledgeClient
 from openclaw_ultimate.rag.models import (
     KnowledgeChunk,
     KnowledgeIndexReport,
@@ -31,6 +33,8 @@ class KnowledgeBase:
         max_file_bytes: int = 1_000_000,
         embedding_batch_size: int = 16,
         extractor: DocumentExtractor | None = None,
+        external_sources: Sequence[KiwixKnowledgeClient] = (),
+        local_search_timeout: float = 8.0,
     ) -> None:
         if max_file_bytes < 1:
             raise ValueError("max_file_bytes must be positive.")
@@ -45,6 +49,8 @@ class KnowledgeBase:
         self.max_file_bytes = max_file_bytes
         self.embedding_batch_size = embedding_batch_size
         self.extractor = extractor or DocumentExtractor()
+        self.external_sources = tuple(external_sources)
+        self.local_search_timeout = local_search_timeout
 
     async def index(
         self,
@@ -152,16 +158,40 @@ class KnowledgeBase:
         if not clean_query:
             return ()
 
-        vectors = await self.embedding_model.embed((clean_query,))
+        async def search_local() -> tuple[KnowledgeSearchHit, ...]:
+            vectors = await self.embedding_model.embed((clean_query,))
+            if len(vectors) != 1:
+                raise RuntimeError("Embedding model returned an unexpected vector count.")
+            return self.store.search(
+                clean_query,
+                query_embedding=vectors[0],
+                limit=limit,
+                minimum_score=minimum_score,
+            )
 
-        if len(vectors) != 1:
-            raise RuntimeError("Embedding model returned an unexpected vector count.")
-
-        return self.store.search(
-            clean_query,
-            query_embedding=vectors[0],
-            limit=limit,
-            minimum_score=minimum_score,
+        local_task = asyncio.create_task(search_local())
+        external_tasks = [
+            asyncio.create_task(source.search(clean_query, limit=limit))
+            for source in self.external_sources
+        ]
+        try:
+            local_hits = await asyncio.wait_for(
+                local_task,
+                timeout=self.local_search_timeout,
+            )
+        except (TimeoutError, OSError, RuntimeError):
+            local_hits = ()
+        external_hits = [
+            hit
+            for result in await asyncio.gather(*external_tasks)
+            for hit in result
+        ]
+        return tuple(
+            sorted(
+                (*local_hits, *external_hits),
+                key=lambda hit: hit.score,
+                reverse=True,
+            )[:limit]
         )
 
     async def _embed_chunks(

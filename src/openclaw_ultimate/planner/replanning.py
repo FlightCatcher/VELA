@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from openclaw_ultimate.planner.models import PlanStatus, PlanStep, TaskPlan
+from openclaw_ultimate.planner.models import PlanStatus, PlanStep, StepStatus, TaskPlan
 from openclaw_ultimate.planner.reflection import ReflectionResult, SuggestedAction
 
 
@@ -59,6 +59,10 @@ class ReplanningEngine:
         if revision_number < 1:
             raise ValueError("revision_number must be at least 1.")
 
+        selected_step = proposed_step or self._default_proposed_step(
+            plan=plan,
+            reflection=reflection,
+        )
         return PlanRevision(
             revision_id=uuid4().hex,
             plan_id=plan.id,
@@ -69,7 +73,32 @@ class ReplanningEngine:
             rationale=reflection.root_cause,
             suggested_changes=reflection.suggested_changes,
             created_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
-            proposed_step=proposed_step,
+            proposed_step=selected_step,
+        )
+
+    @staticmethod
+    def _default_proposed_step(
+        *,
+        plan: TaskPlan,
+        reflection: ReflectionResult,
+    ) -> PlanStep:
+        original = next(
+            (step for step in plan.steps if step.id == reflection.step_id),
+            None,
+        )
+        if original is None:
+            raise ValueError(f"Reflection step does not exist: {reflection.step_id}")
+        guidance = "；".join(reflection.suggested_changes)
+        description = original.description
+        if guidance:
+            description = f"{description}\n恢复建议：{guidance}"
+        return PlanStep(
+            id=original.id,
+            title=original.title,
+            description=description,
+            dependencies=original.dependencies,
+            tool_hint=original.tool_hint,
+            status=StepStatus.PENDING,
         )
 
     def apply(

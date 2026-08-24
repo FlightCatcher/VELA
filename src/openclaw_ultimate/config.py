@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     knowledge_search_limit: int = 5
     knowledge_minimum_score: float = 0.2
     knowledge_max_context_characters: int = 5000
+    knowledge_kiwix_enabled: bool = True
+    knowledge_kiwix_base_url: str = "http://127.0.0.1:18080"
+    knowledge_kiwix_timeout: float = 8.0
+    knowledge_kiwix_result_limit: int = 3
+    knowledge_local_search_timeout: float = 8.0
 
     vision_enabled: bool = True
     vision_model: str = "qwen3-vl:8b"

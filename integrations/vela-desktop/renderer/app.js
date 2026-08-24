@@ -1,8 +1,9 @@
 import { marked } from "/deps/marked.js";
 import createDOMPurify from "/deps/purify.js";
 import { latestMessageByRole } from "./history.js";
-import { looksLikeImageGenerationRequest, needsVerifiedIdentityPipeline } from "./intents.js";
+import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
+import { RunCoordinator } from "./run-control.js";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -14,8 +15,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 1.8 · 就绪",
-    healthDegraded: "VELA 1.8 · 部分服务离线",
+    healthReady: "VELA 2.0 · 就绪",
+    healthDegraded: "VELA 2.0 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -23,7 +24,7 @@ const translations = {
     fileAdded: "文件已添加",
     fileLimit: "最多添加 8 个文件，每个不超过 25 MB",
     generateImage: "生成图片",
-    generateImageHint: "使用本地 ComfyUI",
+    generateImageHint: "使用 VELA 本地原生引擎",
     imageMode: "生图",
     imageModeActive: "生图模式已开启",
     imageAspect: "画幅",
@@ -100,9 +101,9 @@ const translations = {
     reconnect: "重新连接",
     sendFailed: "发送失败",
     sendHint: "Enter 发送",
-    qualityHigh: "推荐 22 步",
-    qualityStandard: "快速 5 步",
-    qualityUltra: "极致 30 步",
+    qualityHigh: "推荐 · 2K",
+    qualityStandard: "快速 · HD",
+    qualityUltra: "极致 · 4K",
     referenceHint: "上传参考图可锁定脸型、发型和服装；严格模式优先保留身份",
     textFidelity: "文字清晰",
     textAuto: "智能",
@@ -116,7 +117,7 @@ const translations = {
     progressConsistency: "正在检查画面设定冲突",
     progressRouting: "正在搜索资料并选择专用模型",
     progressQueued: "已进入生成队列",
-    progressGenerating: "ComfyUI 正在生成",
+    progressGenerating: "VELA 正在本地生成",
     progressChecking: "生成完成，正在显示图片",
     progressOffline: "本地生图引擎未连接",
     progressEstimate: "预计进度",
@@ -132,6 +133,10 @@ const translations = {
     styleProduct: "产品",
     subtitle: "可聊天、看图、读文件，也可以直接在对话中生成图片。",
     thinking: "VELA 正在处理",
+    thinkingUnderstand: "正在理解任务",
+    thinkingPlan: "正在规划步骤",
+    thinkingExecute: "正在执行任务",
+    thinkingVerify: "正在核对结果",
     title: "今天想让 VELA 做什么？",
     untitled: "新对话"
   },
@@ -141,8 +146,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 1.8 · Ready",
-    healthDegraded: "VELA 1.8 · Degraded",
+    healthReady: "VELA 2.0 · Ready",
+    healthDegraded: "VELA 2.0 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -150,7 +155,7 @@ const translations = {
     fileAdded: "File added",
     fileLimit: "Up to 8 files, 25 MB each",
     generateImage: "Create an image",
-    generateImageHint: "Powered by local ComfyUI",
+    generateImageHint: "Powered by VELA Native Engine",
     imageMode: "Image",
     imageModeActive: "Image mode enabled",
     imageAspect: "Canvas",
@@ -227,9 +232,9 @@ const translations = {
     reconnect: "Reconnect",
     sendFailed: "Could not send",
     sendHint: "Enter to send",
-    qualityHigh: "Recommended · 22",
-    qualityStandard: "Fast · 5",
-    qualityUltra: "Ultra · 30",
+    qualityHigh: "Recommended · 2K",
+    qualityStandard: "Fast · HD",
+    qualityUltra: "Ultra · 4K",
     referenceHint: "Attach a reference to lock face, hair and outfit; strict mode favors identity",
     textFidelity: "Text fidelity",
     textAuto: "Auto",
@@ -243,7 +248,7 @@ const translations = {
     progressConsistency: "Checking visual consistency",
     progressRouting: "Researching and selecting a specialist model",
     progressQueued: "Queued for generation",
-    progressGenerating: "ComfyUI is generating",
+    progressGenerating: "VELA is generating locally",
     progressChecking: "Generated; displaying the image",
     progressOffline: "Local image engine is offline",
     progressEstimate: "Estimated progress",
@@ -259,6 +264,10 @@ const translations = {
     styleProduct: "Product",
     subtitle: "Chat, understand files and images, or create images directly in the conversation.",
     thinking: "VELA is working",
+    thinkingUnderstand: "Understanding the task",
+    thinkingPlan: "Planning the steps",
+    thinkingExecute: "Executing the task",
+    thinkingVerify: "Verifying the result",
     title: "What should VELA do today?",
     untitled: "New chat"
   }
@@ -322,8 +331,9 @@ const defaultSession = {
 };
 
 const defaultImageSettings = {
+  routingVersion: 2,
   aspect: "landscape",
-  engine: "anime",
+  engine: "auto",
   quality: "high",
   reference: "smart",
   memory: "remember",
@@ -333,13 +343,16 @@ const defaultImageSettings = {
 
 const state = {
   activeRunId: null,
+  activeUserText: "",
   attachments: [],
   bootstrap: null,
   client: null,
   connected: false,
   history: [],
+  historySignature: "",
   imageMode: false,
   activeImageRun: false,
+  cancelledTurn: null,
   imageProgress: { value: 0, stage: "", detail: "" },
   imageQueueSeen: false,
   imageStartedAt: 0,
@@ -351,6 +364,8 @@ const state = {
   language: localStorage.getItem("openclaw.desktop.language") === "en" ? "en" : "zh",
   optimistic: null,
   pending: false,
+  thinkingPhase: 0,
+  thinkingTimer: null,
   pollTimer: null,
   refreshForceScroll: false,
   refreshInFlight: false,
@@ -372,6 +387,8 @@ const state = {
   workspaceRefreshTimer: null
 };
 
+const runCoordinator = new RunCoordinator();
+
 function loadTheme() {
   const saved = localStorage.getItem("vela.desktop.theme");
   if (saved === "light" || saved === "dark") return saved;
@@ -390,11 +407,16 @@ function t(key) {
 function loadImageSettings() {
   try {
     const parsed = JSON.parse(localStorage.getItem("openclaw.desktop.imageSettings") ?? "{}");
+    const migrationKey = "vela.desktop.imageWorkflowV1";
+    const migrated = localStorage.getItem(migrationKey) === "1";
+    const migratedEngine = migrated ? parsed.engine : "auto";
+    if (!migrated) localStorage.setItem(migrationKey, "1");
     return {
+      routingVersion: 2,
       aspect: ["square", "landscape", "portrait", "classic", "vertical", "photo"].includes(parsed.aspect)
         ? parsed.aspect
         : defaultImageSettings.aspect,
-      engine: ["anime", "ssd1b", "flux2", "realistic"].includes(parsed.engine) ? parsed.engine : defaultImageSettings.engine,
+      engine: ["auto", "anime", "ssd1b", "flux2", "realistic"].includes(migratedEngine) ? migratedEngine : defaultImageSettings.engine,
       quality: ["standard", "high", "ultra"].includes(parsed.quality)
         ? parsed.quality
         : defaultImageSettings.quality,
@@ -483,7 +505,8 @@ function updateCurrentSession(patch) {
   renderHeader();
 }
 
-function newSession() {
+async function newSession() {
+  if (state.pending) await abortRun();
   const key = `agent:main:desktop-${crypto.randomUUID()}`;
   state.sessions.unshift({ key, title: t("untitled"), updatedAt: Date.now() });
   currentSessionKey = key;
@@ -497,7 +520,7 @@ function newSession() {
   requestAnimationFrame(() => els.composerInput.focus());
 }
 
-function deleteSession(key) {
+async function deleteSession(key) {
   const target = state.sessions.find((session) => session.key === key);
   if (!target) return;
   const confirmed = window.confirm(
@@ -506,6 +529,7 @@ function deleteSession(key) {
       : `Delete “${target.title || t("untitled")}” from VELA?`
   );
   if (!confirmed) return;
+  if (currentSessionKey === key && state.pending) await abortRun();
 
   state.sessions = state.sessions.filter((session) => session.key !== key);
   delete state.localImageMessages[key];
@@ -528,8 +552,9 @@ function deleteSession(key) {
   if (state.connected) void refreshHistory(true);
 }
 
-function setSession(key) {
+async function setSession(key) {
   if (key === currentSessionKey) return;
+  if (state.pending) await abortRun();
   currentSessionKey = key;
   state.history = [];
   state.optimistic = null;
@@ -661,7 +686,7 @@ function extractMessageParts(message) {
     return "\n";
   });
 
-  // ComfyUI/OpenClaw tool results commonly arrive as JSON text with a
+  // Local image/tool results commonly arrive as JSON text with a
   // `view_url` field instead of a native image content block. Promote those
   // URLs to real media so the desktop client displays the generated image.
   const toolImageUrlPattern = /["']?(?:view_url|image_url|media_url|mediaUrl)["']?\s*:\s*["'](https?:\/\/[^"'\\\s]+|[A-Za-z]:\\[^"'\\\s]+)["']/gi;
@@ -693,7 +718,7 @@ function hasVisibleContent(message) {
 
 function visibleMessages() {
   const seen = new Set();
-  const messages = [...state.history, ...localMessagesForSession()]
+  let messages = [...state.history, ...localMessagesForSession()]
     .filter(hasVisibleContent)
     .filter((message) => {
       const parts = extractMessageParts(message);
@@ -704,6 +729,28 @@ function visibleMessages() {
       seen.add(signature);
       return true;
     });
+  if (state.cancelledTurn?.sessionKey === currentSessionKey) {
+    const cancelledText = cleanUserText(state.cancelledTurn.userText).trim();
+    let cancelledIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (
+        messages[index]?.role === "user"
+        && cleanUserText(contentText(messages[index]?.content)).trim() === cancelledText
+      ) {
+        cancelledIndex = index;
+        break;
+      }
+    }
+    if (cancelledIndex >= 0) {
+      const nextUserIndex = messages.findIndex((message, index) => index > cancelledIndex && message?.role === "user");
+      const boundary = nextUserIndex >= 0 ? nextUserIndex : messages.length;
+      messages = messages.filter((message, index) => !(
+        index > cancelledIndex
+        && index < boundary
+        && message?.role === "assistant"
+      ));
+    }
+  }
   if (state.optimistic) {
     const optimisticText = cleanUserText(contentText(state.optimistic.content));
     const exists = messages.some(
@@ -718,7 +765,7 @@ function visibleMessages() {
 }
 
 function createBrandSvg() {
-  return `<img class="vela-logo" src="/vela-icon.png?v=4.1.1" alt="" />`;
+  return `<svg class="vela-glyph" viewBox="0 0 32 32" aria-hidden="true"><path d="M7.5 8.5 16 24 24.5 8.5M11.5 8.5 16 17l4.5-8.5" /></svg>`;
 }
 
 function renderEmptyState() {
@@ -845,7 +892,12 @@ function renderThinking() {
           <i></i><i></i><b></b>
         </div>
         <div class="thinking-copy">
-          <strong>${escapeHtml(t("thinking"))}</strong>
+          <strong>${escapeHtml([
+            t("thinkingUnderstand"),
+            t("thinkingPlan"),
+            t("thinkingExecute"),
+            t("thinkingVerify")
+          ][state.thinkingPhase % 4] || t("thinking"))}</strong>
           <div class="typing" aria-label="${escapeHtml(t("thinking"))}">
             <span></span><span></span><span></span>
           </div>
@@ -858,6 +910,7 @@ function messagesRenderKey(messages) {
   return JSON.stringify({
     language: state.language,
     pending: state.pending,
+    thinkingPhase: state.thinkingPhase,
     imageProgress: state.activeImageRun ? state.imageProgress : null,
     sessionKey: currentSessionKey,
     messages: messages.map((message) => {
@@ -947,12 +1000,12 @@ function renderSessions() {
     )
     .join("");
   els.sessionList.querySelectorAll("[data-session]").forEach((button) => {
-    button.addEventListener("click", () => setSession(button.dataset.session));
+    button.addEventListener("click", () => void setSession(button.dataset.session));
   });
   els.sessionList.querySelectorAll("[data-delete-session]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      deleteSession(button.dataset.deleteSession);
+      void deleteSession(button.dataset.deleteSession);
     });
   });
 }
@@ -1028,7 +1081,7 @@ async function refreshHealth() {
 function startHealthPolling() {
   if (state.healthTimer) window.clearInterval(state.healthTimer);
   void refreshHealth();
-  state.healthTimer = window.setInterval(() => void refreshHealth(), 12000);
+  state.healthTimer = window.setInterval(() => void refreshHealth(), 30000);
 }
 
 function renderAttachments() {
@@ -1179,7 +1232,7 @@ function renderWorkspacePanel() {
           </button>`).join("")
       : `<div class="workspace-empty">${escapeHtml(t("workspaceEmpty"))}</div>`;
     els.workspacePanelDetail.innerHTML = `
-      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "当前由 OpenClaw 提供模型路由；生图由本机 ComfyUI 负责。" : "OpenClaw routes chat models locally; ComfyUI handles image generation.")}</p></div>
+      <div class="workspace-detail__hero"><span class="workspace-detail__eyebrow">${escapeHtml(t("workspaceModels"))}</span><h3>${escapeHtml(state.models.primary || "-")}</h3><p>${escapeHtml(state.language === "zh" ? "OpenClaw 提供对话路由；VELA 直接加载本地生图模型。" : "OpenClaw routes chat; VELA loads local image models directly.")}</p></div>
       <div class="workspace-component-list">${components.map((item) => `<div><span>${escapeHtml(item.name ?? "component")}</span><strong class="status-pill status-pill--${escapeHtml(String(item.state ?? "offline"))}">${escapeHtml(String(item.state ?? "offline"))}</strong></div>`).join("") || `<div class="workspace-empty">${escapeHtml(t("workspaceNoDetail"))}</div>`}</div>`;
     return;
   }
@@ -1282,7 +1335,7 @@ function syncWorkspaceTimer() {
     return;
   }
   if (!state.workspaceRefreshTimer) {
-    state.workspaceRefreshTimer = window.setInterval(() => void refreshWorkspace(), 5000);
+    state.workspaceRefreshTimer = window.setInterval(() => void refreshWorkspace(), 10000);
   }
 }
 
@@ -1454,49 +1507,38 @@ function messageTitle(text) {
   return normalized.length > 28 ? `${normalized.slice(0, 28)}…` : normalized;
 }
 
-function imageStudioMessage(prompt) {
-  const safePrompt = prompt.replace(/\bPROMPT_END\b/gi, "PROMPT END");
-  return [
-    "OPENCLAW_IMAGE_STUDIO_V2",
-    "ACTION=GENERATE_IMAGE",
-    "IMPORTANT=直接调用 generate_image 工具并在当前对话返回真实图片，不要只描述步骤或提示词",
-    "RETURN_MEDIA=工具返回后保留 outputs[].view_url，使用 MEDIA: URL 或 Markdown 图片返回",
-    `ASPECT=${state.imageSettings.aspect}`,
-    `STYLE=${state.imageSettings.style}`,
-    `QUALITY=${state.imageSettings.quality}`,
-    `REFERENCE_MODE=${state.imageSettings.reference}`,
-    `TEXT_MODE=${state.imageSettings.textMode}`,
-    "RESEARCH_MODE=required",
-    "MODEL_ROUTING=auto",
-    "MAX_GENERATIONS=3",
-    "IDENTITY_TARGET=90",
-    "QUALITY_TARGET=88",
-    "DESIGN_PHASES=SEMANTIC_PARSE,DETAIL_COMPLETION,COMPOSITION,STYLE_LIGHT_COLOR,CONSISTENCY_CHECK",
-    "PIPELINE_ORDER=RESEARCH,REFERENCE_QA,DESIGN_PLAN,MODEL_ROUTER,BOUNDED_GENERATE,IDENTITY_REVIEW,PUBLISH",
-    "FORBIDDEN=parallel_generation,infinite_retry,namesake_substitution,publish_below_threshold",
-    "PUBLISH_POLICY=IDENTITY_90_OR_EXPLICIT_FAILURE",
-    "RESOLUTION=4K",
-    "PROMPT_BEGIN",
-    safePrompt,
-    "PROMPT_END"
-  ].join("\n");
-}
-
 async function sendMessage() {
   if (!state.client || !state.connected || state.pending) return;
   const rawText = els.composerInput.value.trim();
   if (!rawText && state.attachments.length === 0) return;
 
-  const isImageRequest = state.imageMode || looksLikeImageGenerationRequest(rawText);
-  const wireText = isImageRequest ? imageStudioMessage(rawText) : rawText;
+  // A transcript that already exhausted compaction cannot recover by sending
+  // the same request again. Transparently roll over before accepting the next
+  // user turn, while keeping the old chat available in the sidebar.
+  if (state.history.some((message) =>
+    message?.role === "assistant"
+    && /Auto-compaction could not recover/i.test(contentText(message.content))
+  )) {
+    await newSession();
+  }
+
+  const isImageRequest = messageExecutionRoute(rawText, { imageMode: state.imageMode }) === "local-image";
   const attachments = attachmentPayloads();
-  const useVerifiedIdentityPipeline = isImageRequest && (
-    needsVerifiedIdentityPipeline(rawText)
-    || attachments.some((item) => item.type === "image")
-    || state.imageSettings.reference === "strict"
-  );
-  const useDirectImagePipeline = isImageRequest && !useVerifiedIdentityPipeline;
+  // All image requests use the dedicated local pipeline. It already performs
+  // reference discovery, vision inspection, identity locking, model routing,
+  // Native local inference and output upscaling. Sending these requests through the
+  // chat agent caused it to call the image-edit tool and fail with
+  // "image required" when no source image was attached.
+  const useDirectImagePipeline = isImageRequest;
   const runId = crypto.randomUUID();
+  state.cancelledTurn = null;
+  state.activeUserText = rawText || t("noText");
+  const imageController = useDirectImagePipeline ? new AbortController() : null;
+  const activeRun = runCoordinator.start({
+    kind: useDirectImagePipeline ? "image" : "chat",
+    requestId: runId,
+    controller: imageController
+  });
   const sentAt = Date.now();
 
   state.optimistic = {
@@ -1506,6 +1548,7 @@ async function sendMessage() {
     _optimistic: true
   };
   state.pending = true;
+  if (!isImageRequest) startThinkingFlow();
   state.activeRunId = runId;
   state.activeImageRun = isImageRequest;
   state.imageQueueSeen = false;
@@ -1550,19 +1593,32 @@ async function sendMessage() {
           prompt: rawText,
           settings: state.imageSettings,
           attachments: attachments.filter((item) => item.type === "image").slice(0, 1)
-        })
+        }),
+        signal: imageController.signal
       });
       const payload = await response.json();
+      if (!runCoordinator.isCurrent(activeRun)) return;
       if (!response.ok) throw new Error(payload.error || t("sendFailed"));
       const outputs = Array.isArray(payload.outputs) ? payload.outputs : [];
-      if (!outputs.length) throw new Error("ComfyUI returned no image output.");
+      if (!outputs.length) throw new Error("VELA image engine returned no image output.");
+      const workflowEngine = payload.workflow?.engine === "flux2"
+        ? (state.language === "zh" ? "参考编辑" : "reference edit")
+        : payload.workflow?.engine === "realistic"
+          ? (state.language === "zh" ? "写实模型" : "realistic model")
+          : payload.workflow?.engine === "anime"
+            ? (state.language === "zh" ? "动漫模型" : "anime model")
+            : (state.language === "zh" ? "通用模型" : "general model");
+      const workflowNote = payload.workflow
+        ? `${state.language === "zh" ? "工作流" : "Workflow"} · ${workflowEngine}${payload.referenceSource ? ` · ${state.language === "zh" ? "参考" : "reference"}: ${payload.referenceSource}` : ""}`
+        : "";
       const imageMessage = {
         role: "assistant",
         content: [
           outputs.map((output) => `MEDIA: ${output.path || output.viewUrl}`).join("\n"),
           payload.width && payload.height
             ? `\n${state.language === "zh" ? "已生成" : "Generated"} ${payload.width}×${payload.height} · ${payload.resolution ?? "4K"}`
-            : ""
+            : "",
+          workflowNote ? `\n${workflowNote}` : ""
         ].join(""),
         timestamp: Date.now(),
         imageRunId: payload.promptId || runId,
@@ -1572,32 +1628,62 @@ async function sendMessage() {
           resolution: payload.resolution ?? "4K",
           engine: payload.engine,
           referenceUsed: payload.referenceUsed,
-          referenceSource: payload.referenceSource
+          referenceSource: payload.referenceSource,
+          referenceScore: payload.referenceScore,
+          workflow: payload.workflow
         }
       };
       saveLocalImageMessage(imageMessage);
       state.history = [...state.history];
       state.pending = false;
       state.activeRunId = null;
+      state.activeUserText = "";
       state.optimistic = null;
       stopImageStatusPolling();
+      stopThinkingFlow();
+      runCoordinator.finish(activeRun);
       renderAll(true);
       return;
     }
     const response = await state.client.request("chat.send", {
       sessionKey: currentSessionKey,
       agentId: "main",
-      message: wireText,
+      message: rawText,
       deliver: false,
       idempotencyKey: runId,
       attachments: attachments.length ? attachments : undefined
     });
+    const stillCurrent = runCoordinator.attachServerRunId(activeRun, response?.runId);
+    if (!stillCurrent) {
+      if (response?.runId) {
+        await state.client.request("chat.abort", {
+          sessionKey: currentSessionKey,
+          runId: response.runId
+        }).catch(() => {});
+      }
+      return;
+    }
     if (response?.runId) state.activeRunId = response.runId;
     scheduleRefresh(450);
   } catch (error) {
+    if (!runCoordinator.isCurrent(activeRun) || /cancelled|canceled|aborted|fetch failed/i.test(String(error))) return;
+    if (isImageRequest) {
+      state.optimistic = null;
+      saveLocalImageMessage({
+        role: "assistant",
+        content: state.language === "zh"
+          ? `生图失败：${error instanceof Error ? error.message : String(error)}`
+          : `Image generation failed: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now(),
+        imageRunId: `${runId}:error`
+      });
+    }
     state.pending = false;
     state.activeRunId = null;
+    state.activeUserText = "";
+    runCoordinator.finish(activeRun);
     stopImageStatusPolling();
+    stopThinkingFlow();
     toast(`${t("sendFailed")}: ${String(error)}`);
     renderAll();
   }
@@ -1605,7 +1691,22 @@ async function sendMessage() {
 
 async function abortRun() {
   if (!state.client || !state.connected || !state.pending) return;
-  if (state.activeImageRun) {
+  const cancelledRun = runCoordinator.cancel();
+  const cancelledUserText = state.activeUserText;
+  const wasImageRun = state.activeImageRun;
+  const sessionKey = currentSessionKey;
+  const backendRunId = cancelledRun?.serverRunId || state.activeRunId;
+  state.pending = false;
+  state.activeRunId = null;
+  if (!wasImageRun && cancelledUserText) {
+    state.cancelledTurn = { sessionKey, userText: cancelledUserText };
+  }
+  state.activeUserText = "";
+  state.optimistic = null;
+  stopImageStatusPolling();
+  stopThinkingFlow();
+  renderAll();
+  if (wasImageRun) {
     try {
       await fetch("/api/image-cancel", {
         method: "POST",
@@ -1617,19 +1718,22 @@ async function abortRun() {
     }
   }
   try {
-    if (!state.activeImageRun) {
+    if (!wasImageRun) {
       await state.client.request("chat.abort", {
-        sessionKey: currentSessionKey,
-        ...(state.activeRunId ? { runId: state.activeRunId } : {})
+        sessionKey,
+        agentId: "main",
+        preserveSideRuns: false,
+        ...(backendRunId ? { runId: backendRunId } : {})
       });
+      await state.client.request("chat.abort", {
+        sessionKey,
+        agentId: "main",
+        preserveSideRuns: false
+      }).catch(() => {});
     }
   } catch {
     // The run may already have completed.
   }
-  state.pending = false;
-  state.activeRunId = null;
-  stopImageStatusPolling();
-  renderAll();
   scheduleRefresh(250);
 }
 
@@ -1663,12 +1767,16 @@ async function refreshHistory(forceScroll = false) {
     const knownMedia = new Set(
       next.flatMap((message) => extractMessageParts(message).media.map((item) => item.raw))
     );
-    state.history = [
+    const combinedHistory = [
       ...next,
       ...localImages.filter((message) =>
         extractMessageParts(message).media.some((item) => !knownMedia.has(item.raw))
       )
     ];
+    const historySignature = JSON.stringify(combinedHistory);
+    const historyChanged = historySignature !== state.historySignature;
+    state.history = combinedHistory;
+    state.historySignature = historySignature;
     const newestVisible = latestMessageByRole(next.filter(hasVisibleContent), "assistant");
     if (
       state.pending &&
@@ -1677,7 +1785,10 @@ async function refreshHistory(forceScroll = false) {
     ) {
       state.pending = false;
       state.activeRunId = null;
+      state.activeUserText = "";
+      if (runCoordinator.active) runCoordinator.finish(runCoordinator.active);
       stopImageStatusPolling();
+      stopThinkingFlow();
     }
     if (
       state.optimistic &&
@@ -1690,7 +1801,9 @@ async function refreshHistory(forceScroll = false) {
       state.optimistic = null;
     }
     const nextVisibleCount = next.filter(hasVisibleContent).length;
-    renderMessages(forceScroll || nextVisibleCount > previousVisibleCount);
+    if (historyChanged || forceScroll) {
+      renderMessages(forceScroll || nextVisibleCount > previousVisibleCount);
+    }
     renderRunState();
   } catch (error) {
     if (!String(error).includes("not found")) {
@@ -1716,6 +1829,41 @@ function stopImageStatusPolling() {
   state.imageProgress = { value: 0, stage: "", detail: "" };
 }
 
+function startThinkingFlow() {
+  stopThinkingFlow();
+  state.thinkingPhase = 0;
+  state.thinkingTimer = setInterval(() => {
+    if (!state.pending || state.activeImageRun) return;
+    state.thinkingPhase = (state.thinkingPhase + 1) % 4;
+    renderMessages();
+  }, 1250);
+}
+
+function stopThinkingFlow() {
+  clearInterval(state.thinkingTimer);
+  state.thinkingTimer = null;
+  state.thinkingPhase = 0;
+}
+
+function imagePhasePresentation(status, elapsedSeconds) {
+  const zh = state.language === "zh";
+  const workflow = status?.workflow ?? {};
+  const engine = workflow.engine === "flux2" ? "参考编辑" : workflow.engine === "realistic" ? "写实摄影" : workflow.engine === "anime" ? "动漫角色" : "通用概念";
+  const phases = {
+    "analyzing-request": [6, zh ? "理解画面需求" : "Understanding the image", zh ? "提取主体、场景、动作、镜头和限制" : "Extracting subject, scene, camera and constraints"],
+    "compiling-spec": [12, zh ? "建立画面规格" : "Building the visual spec", zh ? `题材：${workflow.subjectType ?? "自动"} · ${engine}` : `Subject: ${workflow.subjectType ?? "auto"} · ${engine}`],
+    "reference-search": [18, zh ? "搜索视觉参考" : "Searching visual references", zh ? "优先查找官方角色图或真实地点特征" : "Prioritizing official identity or real-location traits"],
+    "reference-validation": [24, zh ? "验证参考图片" : "Validating references", zh ? "识别并排除错人、拼图和低质量缩略图" : "Rejecting mismatches, collages and poor thumbnails"],
+    "reference-vision": [30, zh ? "识别稳定特征" : "Inspecting stable traits", zh ? "提取轮廓、配色、标记、材质和地标结构" : "Reading silhouette, palette, markings and landmark structure"],
+    "prompt-compilation": [36, zh ? "编译镜头语言" : "Compiling camera language", zh ? "组合构图、机位、光线、尺度和禁止项" : "Combining composition, camera, light, scale and exclusions"],
+    "loading-model": [42, zh ? "加载专用模型" : "Loading the specialist model", zh ? `已选择：${engine}` : `Selected: ${engine}`],
+    generating: [Math.min(88, 48 + elapsedSeconds * 0.45), zh ? "本地生成中" : "Generating locally", zh ? "正在执行扩散采样与细节合成" : "Running diffusion sampling and detail synthesis"],
+    "finalizing-output": [96, zh ? "整理最终图片" : "Finalizing output", zh ? "保存结果与画面规格" : "Saving the result and visual specification"]
+  };
+  const [value, stage, detail] = phases[status?.activePhase] ?? [Math.min(88, 24 + elapsedSeconds * 0.55), t("progressGenerating"), zh ? "执行本地生图工作流" : "Running the local image workflow"];
+  return { value, stage, detail };
+}
+
 async function refreshImageStatus() {
   if (!state.pending || !state.activeImageRun) return;
   const elapsedSeconds = Math.max(0, (Date.now() - state.imageStartedAt) / 1000);
@@ -1729,15 +1877,11 @@ async function refreshImageStatus() {
       state.imageProgress = {
         value: 1,
         stage: t("progressOffline"),
-        detail: state.language === "zh" ? "正在等待 ComfyUI 启动" : "Waiting for ComfyUI to start"
+        detail: state.language === "zh" ? "正在检查 VELA 图像引擎" : "Checking VELA image engine"
       };
     } else if (status.running > 0) {
       state.imageQueueSeen = true;
-      state.imageProgress = {
-        value: Math.min(88, 24 + elapsedSeconds * 0.55),
-        stage: t("progressGenerating"),
-        detail: state.language === "zh" ? `运行中 · 队列 ${status.pending}` : `Running · ${status.pending} queued`
-      };
+      state.imageProgress = imagePhasePresentation(status, elapsedSeconds);
     } else if (status.pending > 0) {
       state.imageQueueSeen = true;
       state.imageProgress = {
@@ -1788,7 +1932,7 @@ function startPolling() {
   clearInterval(state.pollTimer);
   state.pollTimer = setInterval(() => {
     if (state.connected) void refreshHistory();
-  }, 2400);
+  }, 6000);
 }
 
 async function connectGateway() {
@@ -1880,7 +2024,7 @@ function openMedia(src) {
   els.mediaDialog.showModal();
 }
 
-els.newChatButton.addEventListener("click", newSession);
+els.newChatButton.addEventListener("click", () => void newSession());
 els.languageButton.addEventListener("click", () => {
   state.language = state.language === "zh" ? "en" : "zh";
   localStorage.setItem("openclaw.desktop.language", state.language);
@@ -1951,9 +2095,13 @@ els.imageStudio.addEventListener("click", (event) => {
 });
 els.sendButton.addEventListener("click", sendMessage);
 els.stopButton.addEventListener("click", abortRun);
+let composerUpdateFrame = 0;
 els.composerInput.addEventListener("input", () => {
-  autoResizeComposer();
-  updateSendButton();
+  if (composerUpdateFrame) return;
+  composerUpdateFrame = requestAnimationFrame(() => {
+    composerUpdateFrame = 0;
+    updateSendButton();
+  });
 });
 els.composerInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

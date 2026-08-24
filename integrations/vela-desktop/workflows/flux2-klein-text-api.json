@@ -1,0 +1,89 @@
+{
+  "1": {
+    "inputs": {
+      "unet_name": "flux-2-klein-4b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "2": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "flux2",
+      "device": "cpu"
+    },
+    "class_type": "CLIPLoader"
+  },
+  "3": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "4": {
+    "inputs": {
+      "clip": ["2", 0],
+      "text": "VELA_PROMPT"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "model": ["1", 0],
+      "conditioning": ["4", 0]
+    },
+    "class_type": "BasicGuider"
+  },
+  "6": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect"
+  },
+  "7": {
+    "inputs": {
+      "steps": 12,
+      "width": 768,
+      "height": 1024
+    },
+    "class_type": "Flux2Scheduler"
+  },
+  "8": {
+    "inputs": {
+      "noise_seed": 0
+    },
+    "class_type": "RandomNoise"
+  },
+  "9": {
+    "inputs": {
+      "width": 768,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage"
+  },
+  "10": {
+    "inputs": {
+      "noise": ["8", 0],
+      "guider": ["5", 0],
+      "sampler": ["6", 0],
+      "sigmas": ["7", 0],
+      "latent_image": ["9", 0]
+    },
+    "class_type": "SamplerCustomAdvanced"
+  },
+  "11": {
+    "inputs": {
+      "samples": ["10", 0],
+      "vae": ["3", 0]
+    },
+    "class_type": "VAEDecode"
+  },
+  "12": {
+    "inputs": {
+      "filename_prefix": "VELA-FLUX2",
+      "images": ["11", 0]
+    },
+    "class_type": "SaveImage"
+  }
+}

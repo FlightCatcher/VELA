@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>VELA</title>
-    <link rel="stylesheet" href="/styles.css?v=4.16.0" />
-    <link rel="stylesheet" href="/vela.css?v=4.15.0" />
-    <link rel="stylesheet" href="/vela-apple.css?v=4.15.0" />
+    <link rel="stylesheet" href="/styles.css?v=5.0.1" />
+    <link rel="stylesheet" href="/vela.css?v=5.0.1" />
+    <link rel="stylesheet" href="/vela-apple.css?v=5.0.1" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-          <small>LOCAL INTELLIGENCE</small>
+            <small>VELA 2.0 · LOCAL INTELLIGENCE</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 1.8 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.0 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -192,6 +192,9 @@
               <div class="image-studio__group">
                 <span class="image-studio__label" data-i18n="imageEngine">引擎</span>
                 <div class="image-studio__choices">
+                  <button class="studio-choice studio-choice--model" type="button" data-image-engine="auto">
+                    <span>智能路由</span><small>按题材自动选择</small>
+                  </button>
                   <button class="studio-choice studio-choice--model" type="button" data-image-engine="anime">
                     <span data-i18n="engineAnime">动漫角色</span><small>Animagine XL · 二次元</small>
                   </button>
@@ -199,7 +202,7 @@
                     <span data-i18n="engineFast">极速 SDXL</span><small>快速草图 · 概念</small>
                   </button>
                   <button class="studio-choice studio-choice--model" type="button" data-image-engine="flux2">
-                    <span data-i18n="engineFlux">FLUX.2 参考</span><small>角色一致性 · 复杂构图</small>
+                    <span>参考一致性</span><small>Img2Img · 角色还原</small>
                   </button>
                   <button class="studio-choice studio-choice--model" type="button" data-image-engine="realistic">
                     <span data-i18n="engineRealistic">写实摄影</span><small>Juggernaut XL · 人像</small>
@@ -236,9 +239,9 @@
                 <div class="image-studio__group image-studio__group--quality">
                   <span class="image-studio__label" data-i18n="imageQuality">质量</span>
                   <div class="image-studio__choices">
-                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="standard" data-i18n="qualityStandard">快速 5 步</button>
-                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="high" data-i18n="qualityHigh">推荐 28 步</button>
-                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="ultra" data-i18n="qualityUltra">极致 30 步</button>
+                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="standard" data-i18n="qualityStandard">快速 · HD</button>
+                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="high" data-i18n="qualityHigh">推荐 · 2K</button>
+                    <button class="studio-choice studio-choice--text" type="button" data-image-quality="ultra" data-i18n="qualityUltra">极致 · 4K</button>
                   </div>
                 </div>
               </div>
@@ -247,12 +250,12 @@
                 <div class="image-studio__group">
                   <span class="image-studio__label" data-i18n="imageReference">角色参考</span>
                   <div class="image-studio__choices">
-                    <button class="studio-choice studio-choice--text" type="button" data-image-reference="smart" data-i18n="referenceSmart">自动学习</button>
+                    <button class="studio-choice studio-choice--text" type="button" data-image-reference="smart">智能参考</button>
                     <button class="studio-choice studio-choice--text" type="button" data-image-reference="strict" data-i18n="referenceStrict">严格还原</button>
                     <button class="studio-choice studio-choice--text" type="button" data-image-reference="off" data-i18n="referenceOff">关闭</button>
                   </div>
                 </div>
-                <span class="image-studio__reference-hint" data-i18n="referenceHint">自动学习更快；严格还原使用 FLUX.2 原生参考编辑</span>
+                <span class="image-studio__reference-hint">陌生角色先搜索、识图并评分；临时参考图生成后自动清理</span>
               </div>
               <div class="image-studio__text-row">
                 <span class="image-studio__label" data-i18n="textFidelity">文字清晰</span>
@@ -325,6 +328,6 @@
       />
       <div class="toast-region" id="toast-region" aria-live="polite"></div>
     </div>
-    <script type="module" src="/app.js?v=4.16.0"></script>
+    <script type="module" src="/app.js?v=5.0.2"></script>
   </body>
 </html>

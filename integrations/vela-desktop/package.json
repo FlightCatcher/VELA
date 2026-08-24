@@ -22,6 +22,11 @@
     "appId": "local.vela.desktop",
     "productName": "VELA",
     "asar": true,
+    "asarUnpack": [
+      "src/native_image_engine.py",
+      "src/compose_references.py",
+      "src/prepare_vision_image.py"
+    ],
     "directories": {
       "output": "dist"
     },
@@ -29,6 +34,7 @@
       "src/**/*",
       "renderer/**/*",
       "workflows/**/*",
+      "references/**/*",
       "build/vela-icon.ico",
       "package.json"
     ],

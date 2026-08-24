@@ -249,6 +249,35 @@ class SQLitePlanStore:
 
         return tuple(self._deserialize_plan(json.loads(row["plan_json"])) for row in rows)
 
+    def recover_interrupted_plans(self) -> tuple[TaskPlan, ...]:
+        """Move crash-left running plans to a safe resumable paused state.
+
+        This is explicit rather than automatic in every constructor because
+        short-lived bridge processes may share the database with an executor.
+        """
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT plan_json FROM plans WHERE status = ? ORDER BY updated_at ASC",
+                (PlanStatus.RUNNING.value,),
+            ).fetchall()
+
+        recovered: list[TaskPlan] = []
+        for row in rows:
+            plan = self._deserialize_plan(json.loads(row["plan_json"]))
+            steps = tuple(
+                step.with_status(
+                    StepStatus.PENDING,
+                    error="Interrupted by process restart; execution was not confirmed.",
+                )
+                if step.status == StepStatus.RUNNING
+                else step
+                for step in plan.steps
+            )
+            safe_plan = plan.with_steps(steps, status=PlanStatus.PAUSED)
+            self.save(safe_plan)
+            recovered.append(safe_plan)
+        return tuple(recovered)
+
     def delete(
         self,
         plan_id: str,

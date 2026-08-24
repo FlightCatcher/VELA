@@ -245,6 +245,9 @@ def test_replanning_creates_candidate_without_changing_plan(tmp_path: Path) -> N
     assert len(saved) == 1
     assert saved[0].parent_plan_id == plan.id
     assert saved[0].status.value == "candidate"
+    assert saved[0].proposed_step is not None
+    assert saved[0].proposed_step.status == StepStatus.PENDING
+    assert "恢复建议" in saved[0].proposed_step.description
     assert store.get(plan.id) == plan
 
 

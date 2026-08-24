@@ -84,6 +84,7 @@ class ApiApplication:
         self._diagnostic_provider = diagnostic_provider
         self.governance = SQLiteGovernanceStore(settings.governance_db_path)
         self.plan_store = SQLitePlanStore(settings.planner_db_path)
+        self.recovered_plans = self.plan_store.recover_interrupted_plans()
         self.knowledge_store = SQLiteKnowledgeStore(settings.knowledge_db_path)
         self.memory_store = SQLiteMemoryStore(settings.memory_db_path)
         self._agent: Agent | None = None

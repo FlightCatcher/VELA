@@ -9,6 +9,7 @@ from openclaw_ultimate.rag.extractors import (
 from openclaw_ultimate.rag.factory import (
     build_knowledge_base,
 )
+from openclaw_ultimate.rag.kiwix import KiwixKnowledgeClient
 from openclaw_ultimate.rag.models import (
     KnowledgeChunk,
     KnowledgeIndexReport,
@@ -21,6 +22,7 @@ from openclaw_ultimate.rag.store import SQLiteKnowledgeStore
 __all__ = [
     "DocumentExtractionError",
     "DocumentExtractor",
+    "KiwixKnowledgeClient",
     "KnowledgeBase",
     "KnowledgeChunk",
     "KnowledgeIndexReport",
