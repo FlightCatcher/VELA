@@ -1,5 +1,11 @@
 # Changelog
 
+## VELA 2.3.1 — release pipeline repair - 2026-08-24
+
+- Split desktop install, test, audit, and packaging into separately observable release steps.
+- Build unsigned installers explicitly when no Windows signing certificate is configured.
+- Preserve optional certificate signing support through GitHub repository secrets.
+
 ## VELA 2.3.0 — public-ready foundation - 2026-08-24
 
 - Added first-run onboarding and a recovery-capable startup that remains usable while the Agent runtime is prepared.

@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      SIGNING_ENABLED: ${{ secrets.WINDOWS_CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,16 +29,28 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: integrations/vela-desktop/package-lock.json
-      - name: Verify desktop renderer
+      - name: Install desktop dependencies
+        working-directory: integrations/vela-desktop
+        run: npm ci
+      - name: Test desktop
+        working-directory: integrations/vela-desktop
+        run: npm test
+      - name: Audit desktop dependencies
+        working-directory: integrations/vela-desktop
+        run: npm audit --omit=dev
+      - name: Build unsigned desktop installers
+        if: ${{ env.SIGNING_ENABLED != 'true' }}
+        working-directory: integrations/vela-desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run build
+      - name: Build signed desktop installers
+        if: ${{ env.SIGNING_ENABLED == 'true' }}
         working-directory: integrations/vela-desktop
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-        run: |
-          npm ci
-          npm test
-          npm audit --omit=dev
-          npm run build
+        run: npm run build
       - uses: softprops/action-gh-release@v2
         with:
           name: VELA ${{ github.ref_name }}
