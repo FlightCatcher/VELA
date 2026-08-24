@@ -43,14 +43,14 @@ jobs:
         working-directory: integrations/vela-desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run build
+        run: npm run build -- --publish never
       - name: Build signed desktop installers
         if: ${{ env.SIGNING_ENABLED == 'true' }}
         working-directory: integrations/vela-desktop
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-        run: npm run build
+        run: npm run build -- --publish never
       - uses: softprops/action-gh-release@v2
         with:
           name: VELA ${{ github.ref_name }}

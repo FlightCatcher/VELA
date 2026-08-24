@@ -1,5 +1,10 @@
 # Changelog
 
+## VELA 2.3.2 — deterministic release packaging - 2026-08-24
+
+- Disable Electron Builder's implicit tag publishing in CI.
+- Keep GitHub release asset publication in one dedicated workflow step.
+
 ## VELA 2.3.1 — release pipeline repair - 2026-08-24
 
 - Split desktop install, test, audit, and packaging into separately observable release steps.
