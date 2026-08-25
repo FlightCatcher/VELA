@@ -101,6 +101,8 @@
               </select>
             </label>
             <button class="text-button" id="model-center-button" type="button">模型中心</button>
+            <button class="text-button" id="permission-center-button" type="button">权限</button>
+            <button class="text-button" id="plugin-center-button" type="button">插件</button>
             <button class="text-button" id="support-center-button" type="button">支持</button>
             <div class="privacy-badge">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -351,6 +353,31 @@
             </div>
           </section>
         </div>
+      </dialog>
+
+      <dialog class="model-center permission-center" id="permission-center-dialog">
+        <div class="model-center__header">
+          <div><span>VELA PERMISSIONS</span><h2>权限控制</h2><p>权限会真实作用于 Agent。随时可以一键切回安全模式。</p></div>
+          <button class="model-center__close" id="permission-center-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="permission-warning"><strong>完全访问风险</strong><span>启用后，VELA 可访问任意本地路径、运行程序和控制桌面。恶意网页、文档或插件可能借此修改或删除数据。</span></div>
+        <div class="model-center__viewport">
+          <div class="permission-profile-grid" id="permission-profile-list"></div>
+          <div class="full-access-confirm" id="full-access-confirm" hidden>
+            <label><input id="full-access-checkbox" type="checkbox" /> 我已阅读并理解上述风险</label>
+            <input id="full-access-phrase" placeholder="输入：我了解完全访问风险" autocomplete="off" />
+          </div>
+          <div class="permission-actions"><button id="permission-safe-now" type="button">立即切回安全模式</button><button class="primary-action" id="permission-save" type="button">应用权限</button></div>
+        </div>
+      </dialog>
+
+      <dialog class="model-center plugin-center" id="plugin-center-dialog">
+        <div class="model-center__header">
+          <div><span>VELA PLUGINS</span><h2>插件中心</h2><p>一键安装原生能力；账户类插件仍需由服务商完成安全登录。</p></div>
+          <button class="model-center__close" id="plugin-center-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="model-center__summary"><div><strong>权限透明</strong><span>每个插件都会列出所需权限，不复制 Codex 私有实现或登录凭据。</span></div></div>
+        <div class="model-center__viewport"><div class="plugin-grid" id="plugin-list"></div></div>
       </dialog>
 
       <dialog class="model-center" id="model-center-dialog">

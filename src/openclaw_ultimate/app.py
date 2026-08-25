@@ -23,6 +23,7 @@ from openclaw_ultimate.models import OpenAICompatibleModel
 from openclaw_ultimate.rag import build_knowledge_base
 from openclaw_ultimate.tools import (
     SafeCommandRunner,
+    WebTools,
     WorkspaceTools,
 )
 
@@ -80,6 +81,7 @@ def build_default_agent(
         agent,
         current_settings,
     )
+    _register_web_tools(agent, current_settings)
     _register_openclaw_tool(
         agent,
         current_settings,
@@ -329,6 +331,45 @@ def _register_life_tools(agent: Agent, settings: Settings) -> None:
         )
 
 
+def _register_web_tools(agent: Agent, settings: Settings) -> None:
+    if not settings.web_search_enabled:
+        return
+    web = WebTools(timeout=min(settings.model_timeout, 30.0))
+    agent.tools.add(
+        name="web_search",
+        description="搜索公开网页，返回标题、网址和来源。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+        handler=web.web_search,
+    )
+    agent.tools.add(
+        name="fetch_web_page",
+        description="读取公开 HTTP/HTTPS 网页的正文文本。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "max_characters": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 50000,
+                    "default": 12000,
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        handler=web.fetch_web_page,
+    )
+
+
 def _register_workspace_tools(
     agent: Agent,
     settings: Settings,
@@ -337,6 +378,7 @@ def _register_workspace_tools(
         settings.workspace_root,
         max_read_bytes=(settings.workspace_max_read_bytes),
         max_results=settings.workspace_max_results,
+        allow_absolute_paths=settings.workspace_allow_absolute_paths,
     )
 
     agent.tools.add(
@@ -417,6 +459,8 @@ def _register_workspace_tools(
         timeout=settings.shell_timeout,
         max_output_characters=(settings.shell_max_output_characters),
         governance_store=SQLiteGovernanceStore(settings.governance_db_path),
+        allow_all_commands=settings.shell_allow_all_commands,
+        require_confirmation=(settings.permission_profile != "full_access"),
     )
     agent.tools.add(
         name="run_command",

@@ -33,3 +33,17 @@ def test_workspace_tool_limits_are_validated() -> None:
             _env_file=None,
             shell_timeout=0,
         )
+
+
+def test_full_access_permission_settings_are_explicit() -> None:
+    settings = Settings(
+        _env_file=None,
+        permission_profile="full_access",
+        enable_shell_tool=True,
+        shell_allow_all_commands=True,
+        workspace_allow_absolute_paths=True,
+    )
+
+    assert settings.permission_profile == "full_access"
+    assert settings.shell_allow_all_commands is True
+    assert settings.workspace_allow_absolute_paths is True

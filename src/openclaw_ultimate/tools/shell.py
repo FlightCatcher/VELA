@@ -28,6 +28,8 @@ class SafeCommandRunner:
         timeout: float = 30.0,
         max_output_characters: int = 20_000,
         governance_store: SQLiteGovernanceStore | None = None,
+        allow_all_commands: bool = False,
+        require_confirmation: bool = True,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero.")
@@ -42,6 +44,8 @@ class SafeCommandRunner:
         self.timeout = timeout
         self.max_output_characters = max_output_characters
         self.governance_store = governance_store
+        self.allow_all_commands = allow_all_commands
+        self.require_confirmation = require_confirmation
 
     async def run_command(
         self,
@@ -51,7 +55,7 @@ class SafeCommandRunner:
     ) -> dict[str, object]:
         normalized = self._normalize_command(command)
 
-        if normalized not in self.allowed_commands:
+        if not self.allow_all_commands and normalized not in self.allowed_commands:
             raise WorkspaceAccessError(f"Command is not allowed: {command}")
 
         cwd = self.workspace.resolve_path(working_directory)
@@ -61,7 +65,7 @@ class SafeCommandRunner:
 
         clean_arguments = tuple(str(argument) for argument in arguments)
         risk = self._classify(normalized, clean_arguments)
-        if risk != RiskLevel.READ_ONLY:
+        if risk != RiskLevel.READ_ONLY and self.require_confirmation:
             if self.governance_store is None:
                 raise WorkspaceAccessError(
                     "This command requires explicit confirmation, but no "

@@ -26,6 +26,7 @@ class WorkspaceTools:
         *,
         max_read_bytes: int = 1_000_000,
         max_results: int = 200,
+        allow_absolute_paths: bool = False,
     ) -> None:
         if max_read_bytes < 1:
             raise ValueError("max_read_bytes must be at least 1.")
@@ -36,6 +37,7 @@ class WorkspaceTools:
         self.root = Path(root).resolve()
         self.max_read_bytes = max_read_bytes
         self.max_results = max_results
+        self.allow_absolute_paths = allow_absolute_paths
 
         if not self.root.exists():
             raise ValueError(f"Workspace root does not exist: {self.root}")
@@ -194,7 +196,11 @@ class WorkspaceTools:
             raw_path.resolve() if raw_path.is_absolute() else (self.root / raw_path).resolve()
         )
 
-        if candidate != self.root and self.root not in candidate.parents:
+        if (
+            candidate != self.root
+            and self.root not in candidate.parents
+            and not (self.allow_absolute_paths and raw_path.is_absolute())
+        ):
             raise WorkspaceAccessError(f"Path is outside the workspace: {path}")
 
         if self._is_denied_path(candidate):
@@ -207,7 +213,10 @@ class WorkspaceTools:
         path: str | Path,
     ) -> str:
         target = self.resolve_path(path)
-        relative = target.relative_to(self.root)
+        try:
+            relative = target.relative_to(self.root)
+        except ValueError:
+            return str(target)
         rendered = relative.as_posix()
 
         return rendered or "."
@@ -228,10 +237,13 @@ class WorkspaceTools:
         self,
         path: Path,
     ) -> bool:
+        resolved = path.resolve()
         try:
-            relative = path.resolve().relative_to(self.root)
+            relative = resolved.relative_to(self.root)
         except ValueError:
-            return True
+            if not self.allow_absolute_paths:
+                return True
+            relative = resolved
 
         if any(part in self._DENIED_DIRECTORY_NAMES for part in relative.parts):
             return True

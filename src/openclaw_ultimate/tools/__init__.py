@@ -1,4 +1,5 @@
 from openclaw_ultimate.tools.shell import SafeCommandRunner
+from openclaw_ultimate.tools.web import WebTools
 from openclaw_ultimate.tools.workspace import (
     WorkspaceAccessError,
     WorkspaceTools,
@@ -6,6 +7,7 @@ from openclaw_ultimate.tools.workspace import (
 
 __all__ = [
     "SafeCommandRunner",
+    "WebTools",
     "WorkspaceAccessError",
     "WorkspaceTools",
 ]

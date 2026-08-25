@@ -98,6 +98,21 @@ def test_workspace_enforces_read_limit(
         workspace.read_text_file("large.txt")
 
 
+def test_workspace_allows_absolute_path_only_when_explicitly_enabled(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("allowed in full access", encoding="utf-8")
+    workspace = WorkspaceTools(workspace_root, allow_absolute_paths=True)
+
+    result = workspace.read_text_file(str(outside))
+
+    assert result["content"] == "allowed in full access"
+    assert Path(str(result["path"])) == outside
+
+
 def test_safe_command_runner_executes_allowed_command(
     tmp_path: Path,
 ) -> None:
@@ -148,5 +163,21 @@ def test_safe_command_runner_rejects_command(
                 sys.executable,
                 ("-c", "print('blocked')"),
             )
+
+    asyncio.run(run_test())
+
+
+def test_full_access_runner_can_execute_unlisted_command_without_confirmation(
+    tmp_path: Path,
+) -> None:
+    async def run_test() -> None:
+        runner = SafeCommandRunner(
+            WorkspaceTools(tmp_path),
+            allowed_commands=(),
+            allow_all_commands=True,
+            require_confirmation=False,
+        )
+        result = await runner.run_command(sys.executable, ("--version",))
+        assert result["exit_code"] == 0
 
     asyncio.run(run_test())

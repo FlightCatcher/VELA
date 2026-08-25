@@ -1391,6 +1391,51 @@ svg {
   box-shadow: 0 30px 100px rgba(0, 0, 0, 0.5);
 }
 
+.permission-warning {
+  margin: 0 24px 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, #d24b4b 35%, var(--line));
+  border-radius: 18px;
+  background: color-mix(in srgb, #d24b4b 8%, var(--surface));
+  display: grid;
+  gap: 5px;
+}
+
+.permission-warning span { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.permission-profile-grid, .plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.permission-profile {
+  min-height: 210px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--text);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+.permission-profile:hover { transform: translateY(-2px); }
+.permission-profile.is-active { border-color: var(--text); background: color-mix(in srgb, var(--text) 7%, var(--surface)); }
+.permission-profile strong { font-size: 18px; }
+.permission-profile small { color: var(--muted); line-height: 1.5; }
+.permission-profile ul { margin: auto 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.permission-profile__risk { align-self: flex-start; padding: 4px 8px; border-radius: 999px; background: var(--surface-strong); font-size: 11px; }
+.permission-profile__risk--critical { color: #c63d3d; }
+.full-access-confirm { margin-top: 16px; padding: 16px; border-radius: 18px; background: var(--surface-strong); display: grid; gap: 12px; }
+.full-access-confirm[hidden] { display: none; }
+.full-access-confirm input[type="text"], .full-access-confirm input:not([type]) { width: 100%; }
+.permission-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.plugin-card { position: relative; min-height: 210px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: color-mix(in srgb, var(--surface) 82%, transparent); display: flex; flex-direction: column; gap: 12px; }
+.plugin-card div:first-child { display: grid; gap: 6px; }
+.plugin-card div:first-child > span, .plugin-card em { color: var(--muted); font-size: 11px; font-style: normal; }
+.plugin-card strong { font-size: 17px; }
+.plugin-card p { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+.plugin-permissions { display: flex; flex-wrap: wrap; gap: 5px; }
+.plugin-permissions small { padding: 4px 7px; border-radius: 999px; background: var(--surface-strong); color: var(--muted); }
+.plugin-card button { margin-top: auto; }
+
 .media-dialog::backdrop {
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(10px);

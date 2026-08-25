@@ -302,6 +302,19 @@ const els = {
   onboardingSystemProfile: document.querySelector("#onboarding-system-profile"),
   modelSelect: document.querySelector("#model-select"),
   modelCenterButton: document.querySelector("#model-center-button"),
+  permissionCenterButton: document.querySelector("#permission-center-button"),
+  permissionCenterDialog: document.querySelector("#permission-center-dialog"),
+  permissionCenterClose: document.querySelector("#permission-center-close"),
+  permissionProfileList: document.querySelector("#permission-profile-list"),
+  fullAccessConfirm: document.querySelector("#full-access-confirm"),
+  fullAccessCheckbox: document.querySelector("#full-access-checkbox"),
+  fullAccessPhrase: document.querySelector("#full-access-phrase"),
+  permissionSafeNow: document.querySelector("#permission-safe-now"),
+  permissionSave: document.querySelector("#permission-save"),
+  pluginCenterButton: document.querySelector("#plugin-center-button"),
+  pluginCenterDialog: document.querySelector("#plugin-center-dialog"),
+  pluginCenterClose: document.querySelector("#plugin-center-close"),
+  pluginList: document.querySelector("#plugin-list"),
   supportCenterButton: document.querySelector("#support-center-button"),
   supportCenterDialog: document.querySelector("#support-center-dialog"),
   supportCenterClose: document.querySelector("#support-center-close"),
@@ -398,6 +411,9 @@ const state = {
   health: { loading: true, ok: false, services: {}, resources: null },
   imageSettings: loadImageSettings(),
   models: { primary: "", items: [] },
+  permissions: null,
+  selectedPermissionProfile: "safe",
+  plugins: [],
   systemProfile: null,
   modelCategory: "all",
   language: (localStorage.getItem("vela.desktop.language") ?? localStorage.getItem("openclaw.desktop.language")) === "en" ? "en" : "zh",
@@ -2371,6 +2387,57 @@ els.workspaceNav?.addEventListener("click", (event) => {
   void refreshWorkspace();
 });
 els.workspacePanelRefresh?.addEventListener("click", () => void refreshWorkspace());
+async function loadPermissions() {
+  const response = await fetch("/api/permissions", { headers: { "X-Vela-App-Key": appKey } });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "无法读取权限配置");
+  state.permissions = payload;
+  state.selectedPermissionProfile = payload.profile;
+  renderPermissionCenter();
+}
+
+function renderPermissionCenter() {
+  if (!state.permissions || !els.permissionProfileList) return;
+  els.permissionProfileList.innerHTML = state.permissions.profiles.map((profile) => `
+    <button class="permission-profile ${state.selectedPermissionProfile === profile.id ? "is-active" : ""}" type="button" data-permission-profile="${profile.id}">
+      <span class="permission-profile__risk permission-profile__risk--${profile.risk}">${profile.risk === "critical" ? "高风险" : profile.risk === "medium" ? "受控" : "推荐"}</span>
+      <strong>${escapeHtml(profile.name)}</strong><small>${escapeHtml(profile.description)}</small>
+      <ul>${Object.entries(profile.capabilities).filter(([, enabled]) => enabled).map(([name]) => `<li>${escapeHtml(name)}</li>`).join("")}</ul>
+    </button>`).join("");
+  els.fullAccessConfirm.hidden = state.selectedPermissionProfile !== "full_access";
+}
+
+async function savePermissionProfile(profile, confirmation = "") {
+  const response = await fetch("/api/permissions", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify({ profile, confirmation })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "权限设置失败");
+  state.permissions = payload;
+  state.selectedPermissionProfile = payload.profile;
+  renderPermissionCenter();
+  toast(`${payload.active.name}已启用`);
+}
+
+async function loadPlugins() {
+  const response = await fetch("/api/plugins", { headers: { "X-Vela-App-Key": appKey } });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "无法读取插件目录");
+  state.plugins = payload.plugins || [];
+  renderPluginCenter();
+}
+
+function renderPluginCenter() {
+  if (!els.pluginList) return;
+  els.pluginList.innerHTML = state.plugins.map((plugin) => {
+    const installed = plugin.state.status !== "available";
+    const status = plugin.state.status === "ready" ? "已就绪" : plugin.state.status === "needs_authorization" ? "等待登录" : "可安装";
+    return `<article class="plugin-card"><div><span>${escapeHtml(plugin.category)}</span><strong>${escapeHtml(plugin.name)}</strong><p>${escapeHtml(plugin.description)}</p></div><div class="plugin-permissions">${plugin.permissions.map((item) => `<small>${escapeHtml(item)}</small>`).join("")}</div><button type="button" ${installed ? `data-remove-plugin="${plugin.id}"` : `data-install-plugin="${plugin.id}"`}>${installed ? (plugin.state.status === "ready" ? "移除" : "配置账户") : "一键接入"}</button><em>${status}</em></article>`;
+  }).join("");
+}
+
 els.workspacePanelList?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-plan-id]");
   if (button) void selectWorkspacePlan(button.dataset.planId);
@@ -2383,6 +2450,50 @@ els.modelCenterButton?.addEventListener("click", () => {
   els.modelCenterDialog?.showModal();
 });
 els.modelCenterClose?.addEventListener("click", () => els.modelCenterDialog?.close());
+els.permissionCenterButton?.addEventListener("click", () => {
+  void loadPermissions().then(() => els.permissionCenterDialog?.showModal()).catch((error) => toast(String(error)));
+});
+els.permissionCenterClose?.addEventListener("click", () => els.permissionCenterDialog?.close());
+els.permissionProfileList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-permission-profile]");
+  if (!button) return;
+  state.selectedPermissionProfile = button.dataset.permissionProfile;
+  renderPermissionCenter();
+});
+els.permissionSafeNow?.addEventListener("click", () => {
+  void savePermissionProfile("safe").catch((error) => toast(String(error)));
+});
+els.permissionSave?.addEventListener("click", () => {
+  const full = state.selectedPermissionProfile === "full_access";
+  if (full && !els.fullAccessCheckbox.checked) {
+    toast("请先确认你已阅读完全访问风险");
+    return;
+  }
+  void savePermissionProfile(state.selectedPermissionProfile, els.fullAccessPhrase?.value || "").catch((error) => toast(String(error)));
+});
+els.pluginCenterButton?.addEventListener("click", () => {
+  void loadPlugins().then(() => els.pluginCenterDialog?.showModal()).catch((error) => toast(String(error)));
+});
+els.pluginCenterClose?.addEventListener("click", () => els.pluginCenterDialog?.close());
+els.pluginList?.addEventListener("click", async (event) => {
+  const install = event.target.closest("[data-install-plugin]");
+  const remove = event.target.closest("[data-remove-plugin]");
+  if (!install && !remove) return;
+  const plugin = install?.dataset.installPlugin || remove?.dataset.removePlugin;
+  try {
+    const response = await fetch(install ? "/api/plugins/install" : `/api/plugins/${encodeURIComponent(plugin)}`, {
+      method: install ? "POST" : "DELETE",
+      headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+      body: install ? JSON.stringify({ plugin }) : undefined
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "插件操作失败");
+    state.plugins = payload.plugins || [];
+    renderPluginCenter();
+    const selected = state.plugins.find((item) => item.id === plugin);
+    toast(selected?.state.status === "needs_authorization" ? "插件已加入，请完成账户授权" : "插件状态已更新");
+  } catch (error) { toast(String(error)); }
+});
 els.supportCenterButton?.addEventListener("click", () => {
   renderSystemProfile();
   void loadDiagnosticsSummary();

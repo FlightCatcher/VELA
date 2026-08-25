@@ -101,6 +101,8 @@ uv run vela serve
 ## 安全原则
 
 - 默认本地优先、最小权限、重要写操作需确认
+- 桌面端提供安全、标准、完全访问三级权限；完全访问必须明确确认风险，并可一键撤销
+- 插件中心预留网页、浏览器、电脑控制、Home Assistant、Google、Microsoft、Slack、Notion、Box、Atlassian、Figma 与自定义 MCP 接入口
 - Shell 与高风险工具不默认开放
 - 不自动上传本地文件或密钥
 - 重试有次数上限；重新规划会保留原计划版本

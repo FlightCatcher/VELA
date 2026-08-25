@@ -38,6 +38,19 @@ import { imageModelCatalog, imageModelInstallAssets } from "./image-model-catalo
 import { ensureStorageDirectories, loadStorageConfig, saveStorageConfig } from "./storage-config.mjs";
 import { isMissingSessionError } from "./session-recovery.mjs";
 import { buildSystemProfile } from "./system-profile.mjs";
+import {
+  loadPermissionConfig,
+  permissionRuntimeEnvironment,
+  publicPermissionConfig,
+  savePermissionConfig
+} from "./permission-center.mjs";
+import {
+  installPlugin,
+  loadPluginConfig,
+  pluginRuntimeEnvironment,
+  publicPluginCatalog,
+  uninstallPlugin
+} from "./plugin-center.mjs";
 
 const { autoUpdater } = updaterPackage;
 
@@ -71,6 +84,14 @@ autoUpdater.on("error", (error) => { updateState = { ...updateState, state: "fai
 
 function storageConfigPath() {
   return path.join(app.getPath("userData"), "storage.json");
+}
+
+function permissionConfigPath() {
+  return path.join(app.getPath("userData"), "permissions.json");
+}
+
+function pluginConfigPath() {
+  return path.join(app.getPath("userData"), "plugins.json");
 }
 
 function readStorageConfig() {
@@ -2412,6 +2433,73 @@ function createServer() {
         return;
       }
 
+      if (url.pathname === "/api/permissions" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, publicPermissionConfig(loadPermissionConfig(permissionConfigPath())));
+        return;
+      }
+
+      if (url.pathname === "/api/permissions" && req.method === "PUT") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        try {
+          const payload = JSON.parse(await readRequestBody(req));
+          const config = savePermissionConfig(
+            permissionConfigPath(),
+            { profile: payload?.profile },
+            String(payload?.confirmation || "")
+          );
+          const restarted = await restartOcuApi();
+          sendJson(res, 200, { ok: true, restarted, ...publicPermissionConfig(config) });
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
+      if (url.pathname === "/api/plugins" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, publicPluginCatalog(loadPluginConfig(pluginConfigPath())));
+        return;
+      }
+
+      if (url.pathname === "/api/plugins/install" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        try {
+          const payload = JSON.parse(await readRequestBody(req));
+          const permissions = loadPermissionConfig(permissionConfigPath());
+          const catalog = installPlugin(pluginConfigPath(), String(payload?.plugin || ""), permissions.profile);
+          await restartOcuApi();
+          sendJson(res, 200, { ok: true, ...catalog });
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/plugins/") && req.method === "DELETE") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const pluginId = decodeURIComponent(url.pathname.slice("/api/plugins/".length));
+        const catalog = uninstallPlugin(pluginConfigPath(), pluginId);
+        await restartOcuApi();
+        sendJson(res, 200, { ok: true, ...catalog });
+        return;
+      }
+
       if (url.pathname === "/api/storage" && req.method === "GET") {
         if (!requestIsAuthorized(req, url)) {
           sendJson(res, 403, { error: "Forbidden" });
@@ -3096,6 +3184,14 @@ async function ensureOcuApi() {
             env: {
               ...process.env,
               ...modelRuntimeEnvironment(readModelCenterConfig(), decryptApiKey),
+              ...permissionRuntimeEnvironment(
+                loadPermissionConfig(permissionConfigPath()),
+                VELA_PROJECT_ROOT
+              ),
+              ...pluginRuntimeEnvironment(
+                loadPluginConfig(pluginConfigPath()),
+                loadPermissionConfig(permissionConfigPath()).profile
+              ),
               UV_PROJECT_ENVIRONMENT: path.join(storagePaths().runtimeRoot, "agent-venv"),
               UV_CACHE_DIR: path.join(storagePaths().cacheRoot, "uv"),
               OCU_OPENCLAW_ENABLED: "false",

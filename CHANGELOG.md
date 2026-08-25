@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — permission and plugin center
+
+- Add Safe, Standard, and Full Access permission profiles that are enforced by the Agent runtime.
+- Require an explicit risk acknowledgement before Full Access can be enabled, with one-click safe-mode revocation.
+- Allow unrestricted commands and absolute local paths only while Full Access is active.
+- Add a persistent plugin catalog with native, OAuth, configuration, and MCP connector entry points.
+- Declare each plugin's requested permissions and never treat account connectors as authorized before login.
+- Add desktop permission and plugin management surfaces plus regression coverage.
+
 ## VELA 2.5.0-beta.4 — first public beta candidate - 2026-08-25
 
 - Add first-launch hardware, memory, accelerator, network and model-drive detection with tiered recommendations.

@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     )
 
     enable_shell_tool: bool = False
+    permission_profile: str = "safe"
+    shell_allow_all_commands: bool = False
+    workspace_allow_absolute_paths: bool = False
+    web_search_enabled: bool = False
+    desktop_control_enabled: bool = False
     workspace_root: Path = Field(default_factory=Path.cwd)
     workspace_max_read_bytes: int = 1_000_000
     workspace_max_results: int = 200
@@ -44,6 +49,14 @@ class Settings(BaseSettings):
     )
     shell_timeout: float = 30.0
     shell_max_output_characters: int = 20_000
+
+    @field_validator("permission_profile")
+    @classmethod
+    def validate_permission_profile(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned not in {"safe", "standard", "full_access"}:
+            raise ValueError("permission_profile must be safe, standard, or full_access.")
+        return cleaned
 
     session_db_path: Path = Path(".vela/sessions.db")
     history_message_limit: int = 100
