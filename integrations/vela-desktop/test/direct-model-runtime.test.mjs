@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   buildLlamaServerArgs,
   directModelId,
-  discoverGgufModels
+  discoverGgufModels,
+  findLlamaServer
 } from "../src/direct-model-runtime.mjs";
 
 test("discovers GGUF models without descending forever", () => {
@@ -19,6 +20,16 @@ test("discovers GGUF models without descending forever", () => {
   const models = discoverGgufModels([root]);
   assert.equal(models.length, 1);
   assert.equal(models[0].label, "tiny");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("finds platform-specific llama.cpp server executables", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vela-runtime-"));
+  fs.mkdirSync(path.join(root, "bin"));
+  const macServer = path.join(root, "bin", "llama-server");
+  fs.writeFileSync(macServer, "binary");
+  assert.equal(findLlamaServer(root, "darwin"), macServer);
+  assert.equal(findLlamaServer(root, "win32"), "");
   fs.rmSync(root, { recursive: true, force: true });
 });
 

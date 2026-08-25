@@ -1,5 +1,16 @@
 # Changelog
 
+## VELA 2.5.0-beta.1 — first public beta candidate - 2026-08-25
+
+- Add first-launch hardware, memory, accelerator, network and model-drive detection with tiered recommendations.
+- Add explicit offline, low-memory, no-accelerator and low-disk guidance.
+- Make the Qwen3 4B direct starter path install llama.cpp, resume and verify the model, register it and activate it without Ollama.
+- Retry interrupted catalog downloads up to three times while preserving valid partial data; remove corrupt partial files after SHA-256 failure.
+- Add local crash diagnostics with secret redaction, privacy disclosure, user-data export, feedback entry and data-directory access.
+- Label every generated image as the best returned candidate and state that character likeness is not guaranteed.
+- Add clean Windows installation smoke testing and Windows/macOS release jobs for Intel and Apple Silicon.
+- Add installation, privacy, known-issues and 20–50 person external beta-test documentation.
+
 ## VELA 2.4.5 — reliable character image delivery - 2026-08-25
 
 - Recognize possessive character prompts such as “绊爱的正面图” as anime identity work instead of generic photography.

@@ -1,6 +1,6 @@
 {
   "name": "vela-desktop",
-  "version": "2.4.5",
+  "version": "2.5.0-beta.1",
   "private": true,
   "type": "module",
   "description": "VELA independent local-first AI agent desktop.",
@@ -9,7 +9,9 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win nsis portable --x64",
+    "build": "npm run build:win",
+    "build:win": "electron-builder --win nsis portable --x64",
+    "build:mac": "electron-builder --mac dmg zip --arm64 --x64",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
@@ -39,6 +41,7 @@
       "workflows/**/*",
       "references/**/*",
       "build/vela-icon.ico",
+      "renderer/vela-icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -88,6 +91,15 @@
           ]
         }
       ]
+    },
+    "mac": {
+      "icon": "renderer/vela-icon.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
+      "artifactName": "VELA-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,

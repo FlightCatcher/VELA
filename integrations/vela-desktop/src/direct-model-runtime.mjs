@@ -44,10 +44,12 @@ export function discoverGgufModels(roots = DIRECT_MODEL_ROOTS, maxDepth = 5) {
   return models.sort((left, right) => left.label.localeCompare(right.label));
 }
 
-export function findLlamaServer(runtimeRoot) {
+export function findLlamaServer(runtimeRoot, platform = process.platform) {
+  const executable = platform === "win32" ? "llama-server.exe" : "llama-server";
   const candidates = [
-    path.join(runtimeRoot, "llama-server.exe"),
-    path.join(runtimeRoot, "bin", "llama-server.exe")
+    path.join(runtimeRoot, executable),
+    path.join(runtimeRoot, "bin", executable),
+    path.join(runtimeRoot, "build", "bin", executable)
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || "";
 }

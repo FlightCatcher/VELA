@@ -1,8 +1,8 @@
 # VELA Desktop
 
-VELA Desktop is the native Windows interface for OpenClaw-Ultimate. It is an Electron
-application that connects to the local OpenClaw Gateway and therefore keeps existing
-sessions, DeepSeek model configuration, tools, attachments and ComfyUI integration.
+VELA Desktop is the independent Windows and macOS interface for VELA. It bundles the
+Agent source and prepares a managed runtime on first launch, so Python, Node.js, Ollama
+and preinstalled models are not prerequisites for the direct-model starter path.
 
 ## Development
 
@@ -13,10 +13,10 @@ npm start
 
 ## Build
 
-```powershell
-npm run build
-```
+Windows: `npm run build:win`
 
-The portable executable is written to `dist/VELA-Desktop.exe`.
+macOS: `npm run build:mac`
+
+Windows installers and macOS DMG/ZIP packages are written to `dist/`.
 
 Do not commit `node_modules/` or `dist/`.

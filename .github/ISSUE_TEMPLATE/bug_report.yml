@@ -1,0 +1,39 @@
+name: Public beta bug
+description: Report a reproducible VELA problem
+title: "[Bug]: "
+labels: ["bug", "public-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not paste API keys, private conversations, personal documents or unreviewed diagnostic files."
+  - type: input
+    id: version
+    attributes:
+      label: VELA version
+      placeholder: "2.x.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options: ["Windows 11", "Windows 10", "macOS Apple Silicon", "macOS Intel", "Other"]
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware summary
+      description: Memory, GPU and free model-drive space. Do not include serial numbers.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true

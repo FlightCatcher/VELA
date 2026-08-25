@@ -30,18 +30,20 @@ import {
 import {
   buildLlamaServerArgs,
   DIRECT_MODEL_PORT,
+  directModelId,
   discoverGgufModels,
   findLlamaServer
 } from "./direct-model-runtime.mjs";
 import { imageModelCatalog, imageModelInstallAssets } from "./image-model-catalog.mjs";
 import { ensureStorageDirectories, loadStorageConfig, saveStorageConfig } from "./storage-config.mjs";
 import { isMissingSessionError } from "./session-recovery.mjs";
+import { buildSystemProfile } from "./system-profile.mjs";
 
 const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.5";
+const VELA_RELEASE = "2.5.0-beta.1";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -73,7 +75,7 @@ function storageConfigPath() {
 
 function readStorageConfig() {
   const configPath = storageConfigPath();
-  if (!fs.existsSync(configPath) && fs.existsSync("D:\\AI-Models-HotCache\\Models")) {
+  if (process.platform === "win32" && !fs.existsSync(configPath) && fs.existsSync("D:\\AI-Models-HotCache\\Models")) {
     return saveStorageConfig(configPath, { dataRoot: "D:\\AI-Models-HotCache" });
   }
   return loadStorageConfig(configPath, app.getPath("documents"));
@@ -86,13 +88,14 @@ function storagePaths() {
   const directLegacy = "E:\\AI-Models\\Runtimes\\llama.cpp";
   const currentImageEngineRoot = path.join(storage.dataRoot, "ImageEngine");
   const installedImageEngineRoot = path.join(storage.dataRoot, "VELA-ImageEngine");
-  const imageEngineRoot = fs.existsSync(path.join(installedImageEngineRoot, "runtime", "python.exe"))
+  const pythonRelativePath = process.platform === "win32" ? path.join("runtime", "python.exe") : path.join("runtime", "bin", "python");
+  const imageEngineRoot = fs.existsSync(path.join(installedImageEngineRoot, pythonRelativePath))
     ? installedImageEngineRoot
     : currentImageEngineRoot;
   return {
     ...storage,
     imageEngineRoot,
-    nativePython: path.join(imageEngineRoot, "runtime", "python.exe"),
+    nativePython: path.join(imageEngineRoot, pythonRelativePath),
     nativePackages: path.join(imageEngineRoot, "python_packages"),
     comfyOutputRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Outputs") : path.join(storage.outputRoot, "Images"),
     characterMemoryRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Character-Memory") : path.join(storage.dataRoot, "Character-Memory"),
@@ -130,7 +133,7 @@ function decryptApiKey(encrypted) {
 function encryptApiKey(value) {
   if (!value) return "";
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("Windows secure storage is unavailable; the API key was not saved.");
+    throw new Error("Secure operating-system storage is unavailable; the API key was not saved.");
   }
   return safeStorage.encryptString(value).toString("base64");
 }
@@ -1797,7 +1800,7 @@ async function independentModelCatalog() {
   const config = readModelCenterConfig();
   const storage = storagePaths();
   const local = await readInstalledOllamaModels();
-  const direct = discoverGgufModels().map((item) => ({
+  const direct = discoverGgufModels([path.join(storage.modelsRoot, "GGUF")]).map((item) => ({
     ...item,
     id: `direct/${item.id}`,
     provider: "direct",
@@ -1861,10 +1864,12 @@ async function installNativeImageRuntime() {
     const uv = await ensureManagedUv();
     if (!uv) throw new Error("VELA could not prepare its Python package manager.");
     const runtime = path.join(storage.imageEngineRoot, "runtime");
-    const python = path.join(runtime, "python.exe");
+    const python = process.platform === "win32" ? path.join(runtime, "python.exe") : path.join(runtime, "bin", "python");
     if (!fs.existsSync(python)) await execFileAsync(uv, ["venv", "--python", "3.12", runtime], 600000);
     modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0, status: "installing-pytorch" });
-    await execFileAsync(uv, ["pip", "install", "--python", python, "torch", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu128"], 1800000);
+    const torchArgs = ["pip", "install", "--python", python, "torch", "torchvision"];
+    if (process.platform === "win32") torchArgs.push("--index-url", "https://download.pytorch.org/whl/cu128");
+    await execFileAsync(uv, torchArgs, 1800000);
     modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0, status: "installing-image-packages" });
     await execFileAsync(uv, ["pip", "install", "--python", python, "--target", storage.nativePackages, "diffusers>=0.35", "transformers>=4.50", "accelerate", "safetensors", "pillow"], 1800000);
     if (!fs.existsSync(python) || !fs.existsSync(path.join(storage.nativePackages, "diffusers", "__init__.py"))) {
@@ -1904,6 +1909,24 @@ async function installImageModel(model) {
 }
 
 async function downloadFile(url, destination, progressKey, expectedSha256 = "") {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await downloadFileOnce(url, destination, progressKey, expectedSha256);
+    } catch (error) {
+      lastError = error;
+      if (modelDownloads.get(progressKey)?.state === "cancelled" || error?.name === "AbortError") throw error;
+      modelDownloads.set(progressKey, {
+        ...modelDownloads.get(progressKey), model: progressKey, state: "downloading",
+        status: `retrying-${attempt}`, error: error instanceof Error ? error.message : String(error)
+      });
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function downloadFileOnce(url, destination, progressKey, expectedSha256 = "") {
   const partial = `${destination}.part`;
   const offset = fs.existsSync(partial) ? fs.statSync(partial).size : 0;
   const controller = new AbortController();
@@ -1935,7 +1958,10 @@ async function downloadFile(url, destination, progressKey, expectedSha256 = "") 
   }
   if (expectedSha256) {
     const digest = await sha256File(partial);
-    if (digest !== expectedSha256.toLowerCase()) throw new Error("Downloaded model failed SHA-256 verification.");
+    if (digest !== expectedSha256.toLowerCase()) {
+      fs.rmSync(partial, { force: true });
+      throw new Error("Downloaded model failed SHA-256 verification; the corrupted partial file was removed.");
+    }
   }
   fs.rmSync(destination, { force: true });
   fs.renameSync(partial, destination);
@@ -1964,27 +1990,34 @@ async function installDirectRuntime() {
   const key = "llama.cpp";
   if (modelDownloads.get(key)?.state === "downloading") return;
   modelDownloads.set(key, { model: key, state: "downloading", completed: 0, total: 0 });
-  const archive = path.join(directRuntimeRoot, "llama.cpp-vulkan.zip");
+  const archive = path.join(directRuntimeRoot, process.platform === "win32" ? "llama.cpp-runtime.zip" : "llama.cpp-runtime.tar.gz");
   try {
     const releaseResponse = await fetch("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20", {
       headers: { "User-Agent": "VELA-Desktop" }, signal: AbortSignal.timeout(15000)
     });
     if (!releaseResponse.ok) throw new Error(`GitHub release lookup failed (${releaseResponse.status}).`);
     const releases = await releaseResponse.json();
+    const assetPattern = process.platform === "win32"
+      ? /^llama-.*-bin-win-vulkan-x64\.zip$/i
+      : process.platform === "darwin" && process.arch === "arm64"
+        ? /^llama-.*-bin-macos-arm64\.tar\.gz$/i
+        : process.platform === "darwin"
+          ? /^llama-.*-bin-macos-x64\.tar\.gz$/i
+          : null;
+    if (!assetPattern) throw new Error(`Direct local runtime is not available for ${process.platform}/${process.arch}.`);
     const asset = (Array.isArray(releases) ? releases : [])
       .flatMap((release) => release.assets || [])
-      .find((item) => /^llama-.*-bin-win-vulkan-x64\.zip$/i.test(item.name));
-    if (!asset?.browser_download_url) throw new Error("No current llama.cpp Windows Vulkan x64 package was found.");
+      .find((item) => assetPattern.test(item.name));
+    if (!asset?.browser_download_url) throw new Error(`No current llama.cpp package was found for ${process.platform}/${process.arch}.`);
     await downloadFile(asset.browser_download_url, archive, key);
-    await new Promise((resolve, reject) => {
-      execFile(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${directRuntimeRoot.replaceAll("'", "''")}' -Force`],
-        { timeout: 600000, windowsHide: true },
-        (error) => error ? reject(error) : resolve()
-      );
-    });
-    if (!findLlamaServer(directRuntimeRoot)) throw new Error("llama-server.exe was not found after extraction.");
+    if (process.platform === "win32") {
+      await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${directRuntimeRoot.replaceAll("'", "''")}' -Force`], 600000);
+    } else {
+      await execFileAsync("tar", ["-xzf", archive, "-C", directRuntimeRoot], 600000);
+    }
+    const serverPath = findLlamaServer(directRuntimeRoot);
+    if (!serverPath) throw new Error("llama-server was not found after extraction.");
+    if (process.platform !== "win32") fs.chmodSync(serverPath, 0o755);
     modelDownloads.set(key, { model: key, state: "completed", completed: 1, total: 1 });
   } catch (error) {
     if (modelDownloads.get(key)?.state !== "cancelled") {
@@ -1999,7 +2032,8 @@ async function installDirectModel(model) {
   const catalog = {
     "qwen3-4b-q4": {
       fileName: "Qwen3-4B-Q4_K_M.gguf",
-      url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true"
+      url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true",
+      sha256: "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"
     }
   };
   const entry = catalog[model];
@@ -2008,13 +2042,29 @@ async function installDirectModel(model) {
   const destination = path.join(storagePaths().modelsRoot, "GGUF", entry.fileName);
   modelDownloads.set(model, { model, state: "downloading", completed: 0, total: 0 });
   try {
-    await downloadFile(entry.url, destination, model);
+    await downloadFile(entry.url, destination, model, entry.sha256);
+    const id = directModelId(destination);
+    const config = readModelCenterConfig();
+    config.directModels = config.directModels.filter((item) => item.id !== id);
+    config.directModels.push({ id, label: "Qwen3 4B Q4", modelPath: destination, contextSize: 4096, gpuLayers: 99 });
+    config.primary = `direct/${id}`;
+    saveModelCenterConfig(modelCenterConfigPath(), config);
     modelDownloads.set(model, { model, state: "completed", completed: 1, total: 1, destination });
+    void restartOcuApi();
   } catch (error) {
     if (modelDownloads.get(model)?.state !== "cancelled") {
       modelDownloads.set(model, { model, state: "failed", error: error instanceof Error ? error.message : String(error) });
     }
   }
+}
+
+async function installDirectStarter(model) {
+  await installDirectRuntime();
+  const runtime = modelDownloads.get("llama.cpp");
+  if (runtime?.state !== "completed" && !findLlamaServer(storagePaths().directRuntimeRoot)) {
+    throw new Error(runtime?.error || "Direct model runtime installation failed.");
+  }
+  await installDirectModel(model);
 }
 
 async function installOllamaModel(model) {
@@ -2085,6 +2135,140 @@ function resourceSnapshot() {
   return snapshot;
 }
 
+async function detectSystemProfile() {
+  const storage = storagePaths();
+  let freeDiskBytes = null;
+  try {
+    const stats = fs.statfsSync(storage.modelsRoot);
+    freeDiskBytes = Number(stats.bavail) * Number(stats.bsize);
+  } catch {
+    // The profile remains useful when the filesystem cannot report capacity.
+  }
+  const gpus = await detectGpus();
+  const online = await networkIsAvailable();
+  return buildSystemProfile({
+    platform: process.platform,
+    arch: process.arch,
+    totalMemoryBytes: os.totalmem(),
+    freeMemoryBytes: os.freemem(),
+    freeDiskBytes,
+    gpus,
+    online
+  });
+}
+
+async function detectGpus() {
+  try {
+    if (process.platform === "win32") {
+      try {
+        const nvidiaOutput = await execFileAsync("nvidia-smi.exe", ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], 5000);
+        const nvidiaGpus = nvidiaOutput.split(/\r?\n/).filter(Boolean).map((line) => {
+          const comma = line.lastIndexOf(",");
+          return { name: line.slice(0, comma).trim(), vendor: "nvidia", memoryGb: Number(line.slice(comma + 1).trim()) / 1024 };
+        }).filter((gpu) => gpu.name && Number.isFinite(gpu.memoryGb));
+        if (nvidiaGpus.length) return nvidiaGpus;
+      } catch {
+        // Fall back to Windows inventory when the NVIDIA utility is absent.
+      }
+      const stdout = await execFileAsync("powershell.exe", [
+        "-NoProfile", "-NonInteractive", "-Command",
+        "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress"
+      ], 8000);
+      const parsed = JSON.parse(stdout || "[]");
+      return (Array.isArray(parsed) ? parsed : [parsed]).filter(Boolean).map((gpu) => ({
+        name: String(gpu.Name || "Unknown GPU"),
+        memoryGb: Number(gpu.AdapterRAM || 0) / 1024 ** 3
+      }));
+    }
+    if (process.platform === "darwin") {
+      const stdout = await execFileAsync("system_profiler", ["SPDisplaysDataType", "-json"], 10000);
+      const payload = JSON.parse(stdout || "{}");
+      return (payload.SPDisplaysDataType || []).map((gpu) => ({
+        name: String(gpu.sppci_model || gpu._name || "Apple GPU"),
+        vendor: String(gpu.spdisplays_vendor || "apple").includes("Apple") ? "apple" : "unknown",
+        memoryGb: parseGpuMemory(gpu.spdisplays_vram || gpu.spdisplays_vram_shared)
+      }));
+    }
+  } catch {
+    // Hardware detection is best effort and must not block first launch.
+  }
+  return [];
+}
+
+function parseGpuMemory(value) {
+  const match = String(value || "").match(/([\d.]+)\s*(GB|MB)/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  return match[2].toUpperCase() === "MB" ? amount / 1024 : amount;
+}
+
+async function networkIsAvailable() {
+  try {
+    const response = await fetch("https://github.com/", { method: "HEAD", signal: AbortSignal.timeout(3500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function diagnosticsRoot() {
+  const root = path.join(app.getPath("userData"), "diagnostics");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function writeDiagnostic(kind, details = {}) {
+  const record = {
+    kind,
+    release: VELA_RELEASE,
+    platform: process.platform,
+    arch: process.arch,
+    timestamp: new Date().toISOString(),
+    details: redactDiagnosticValue(details)
+  };
+  const filePath = path.join(diagnosticsRoot(), `${Date.now()}-${String(kind).replace(/[^a-z0-9_-]/gi, "-")}.json`);
+  fs.writeFileSync(filePath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  return filePath;
+}
+
+function redactDiagnosticValue(value) {
+  if (Array.isArray(value)) return value.map(redactDiagnosticValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /(api[_-]?key|token|authorization|password|secret)/i.test(key) ? "[REDACTED]" : redactDiagnosticValue(item)
+  ]));
+}
+
+async function exportUserData() {
+  const selected = await dialog.showOpenDialog({
+    title: "选择 VELA 数据导出目录",
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (selected.canceled || !selected.filePaths[0]) return { canceled: true };
+  const destination = path.join(selected.filePaths[0], `VELA-Export-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+  fs.mkdirSync(destination, { recursive: true });
+  const sources = [
+    "sessions.db", "memory.db", "plans.db", "governance.db", "models.json", "storage.json"
+  ];
+  const exported = [];
+  for (const name of sources) {
+    const source = path.join(app.getPath("userData"), name);
+    if (!fs.existsSync(source)) continue;
+    fs.copyFileSync(source, path.join(destination, name));
+    exported.push(name);
+  }
+  const manifest = {
+    format: "VELA user data export",
+    release: VELA_RELEASE,
+    createdAt: new Date().toISOString(),
+    files: exported,
+    excludes: ["API keys", "model files", "temporary cache"]
+  };
+  fs.writeFileSync(path.join(destination, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return { canceled: false, destination, files: exported };
+}
+
 function createServer() {
   const storage = storagePaths();
   const allowedMediaExtensions = new Set([
@@ -2114,6 +2298,70 @@ function createServer() {
           version: app.getVersion(),
           release: VELA_RELEASE
         });
+        return;
+      }
+
+      if (url.pathname === "/api/system-profile" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, await detectSystemProfile());
+        return;
+      }
+
+      if (url.pathname === "/api/privacy" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, {
+          localFirst: true,
+          telemetry: false,
+          diagnosticsUpload: false,
+          apiKeys: safeStorage.isEncryptionAvailable() ? "encrypted-on-device" : "not-stored",
+          externalRequests: ["model downloads you start", "API providers you configure", "reference search for identity-sensitive image generation"],
+          dataRoot: storagePaths().dataRoot
+        });
+        return;
+      }
+
+      if (url.pathname === "/api/diagnostics" && req.method === "GET") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        const files = fs.readdirSync(diagnosticsRoot()).filter((name) => name.endsWith(".json")).sort().reverse().slice(0, 25);
+        sendJson(res, 200, { root: diagnosticsRoot(), files });
+        return;
+      }
+
+      if (url.pathname === "/api/data/export" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendJson(res, 200, await exportUserData());
+        return;
+      }
+
+      if (url.pathname === "/api/storage/open" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        await shell.openPath(storagePaths().dataRoot);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (url.pathname === "/api/support/feedback" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        await shell.openExternal("https://github.com/FlightCatcher/VELA/issues/new/choose");
+        sendJson(res, 200, { ok: true });
         return;
       }
 
@@ -2310,7 +2558,9 @@ function createServer() {
           sendJson(res, 400, { error: "Unknown direct model." });
           return;
         }
-        void installDirectModel(model);
+        void installDirectStarter(model).catch((error) => {
+          modelDownloads.set(model, { model, state: "failed", error: error instanceof Error ? error.message : String(error) });
+        });
         sendJson(res, 202, { ok: true, model, state: "downloading", target: path.join(storagePaths().modelsRoot, "GGUF") });
         return;
       }
@@ -2887,24 +3137,30 @@ async function ensureOcuApi() {
 
 async function ensureManagedUv() {
   const runtimeRoot = path.join(storagePaths().runtimeRoot, "uv");
-  const executable = path.join(runtimeRoot, "uv.exe");
+  const executable = path.join(runtimeRoot, process.platform === "win32" ? "uv.exe" : "uv");
   if (fs.existsSync(executable)) return executable;
-  const archive = path.join(runtimeRoot, "uv-windows.zip");
+  const platformAsset = process.platform === "win32"
+    ? "uv-x86_64-pc-windows-msvc.zip"
+    : process.platform === "darwin" && process.arch === "arm64"
+      ? "uv-aarch64-apple-darwin.tar.gz"
+      : process.platform === "darwin"
+        ? "uv-x86_64-apple-darwin.tar.gz"
+        : "";
+  if (!platformAsset) return "";
+  const archive = path.join(runtimeRoot, platformAsset);
   fs.mkdirSync(runtimeRoot, { recursive: true });
   try {
     await downloadFile(
-      "https://github.com/astral-sh/uv/releases/download/0.11.19/uv-x86_64-pc-windows-msvc.zip",
+      `https://github.com/astral-sh/uv/releases/download/0.11.19/${platformAsset}`,
       archive,
       "runtime/uv"
     );
-    await new Promise((resolve, reject) => {
-      execFile(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${runtimeRoot.replaceAll("'", "''")}' -Force`],
-        { timeout: 120000, windowsHide: true },
-        (error) => error ? reject(error) : resolve()
-      );
-    });
+    if (process.platform === "win32") {
+      await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${archive.replaceAll("'", "''")}' -DestinationPath '${runtimeRoot.replaceAll("'", "''")}' -Force`], 120000);
+    } else {
+      await execFileAsync("tar", ["-xzf", archive, "--strip-components=1", "-C", runtimeRoot], 120000);
+      if (fs.existsSync(executable)) fs.chmodSync(executable, 0o755);
+    }
     return fs.existsSync(executable) ? executable : "";
   } catch (error) {
     console.error(`[VELA] Managed uv installation failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -2930,6 +3186,12 @@ if (!hasLock) {
   });
 
   app.whenReady().then(async () => {
+    process.on("uncaughtException", (error) => {
+      try { writeDiagnostic("uncaught-exception", { name: error?.name, message: error?.message, stack: error?.stack }); } catch { /* best effort */ }
+    });
+    process.on("unhandledRejection", (reason) => {
+      try { writeDiagnostic("unhandled-rejection", { reason: reason instanceof Error ? { name: reason.name, message: reason.message, stack: reason.stack } : String(reason) }); } catch { /* best effort */ }
+    });
     server = createServer();
     server.on("error", (error) => {
       console.error(error);
@@ -2937,6 +3199,10 @@ if (!hasLock) {
     });
     server.listen(APP_PORT, APP_HOST, () => {
       createWindow();
+      const window = BrowserWindow.getAllWindows()[0];
+      window?.webContents.on("render-process-gone", (_event, details) => {
+        try { writeDiagnostic("renderer-crash", details); } catch { /* best effort */ }
+      });
       void ensureOcuApi().then((ready) => {
         if (!ready) console.error("[VELA] Agent Runtime remains offline; the desktop recovery UI is available.");
       });

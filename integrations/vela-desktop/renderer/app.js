@@ -4,7 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
-import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.4.5";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.5.0-beta.1";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.4.5 · 就绪",
-    healthDegraded: "VELA 2.4.5 · 部分服务离线",
+    healthReady: "VELA 2.5.0-beta.1 · 就绪",
+    healthDegraded: "VELA 2.5.0-beta.1 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.4.5 · Ready",
-    healthDegraded: "VELA 2.4.5 · Degraded",
+    healthReady: "VELA 2.5.0-beta.1 · Ready",
+    healthDegraded: "VELA 2.5.0-beta.1 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -299,8 +299,17 @@ const els = {
   onboardingModels: document.querySelector("#onboarding-models"),
   onboardingFinish: document.querySelector("#onboarding-finish"),
   onboardingSkip: document.querySelector("#onboarding-skip"),
+  onboardingSystemProfile: document.querySelector("#onboarding-system-profile"),
   modelSelect: document.querySelector("#model-select"),
   modelCenterButton: document.querySelector("#model-center-button"),
+  supportCenterButton: document.querySelector("#support-center-button"),
+  supportCenterDialog: document.querySelector("#support-center-dialog"),
+  supportCenterClose: document.querySelector("#support-center-close"),
+  supportSystemProfile: document.querySelector("#support-system-profile"),
+  diagnosticsSummary: document.querySelector("#diagnostics-summary"),
+  exportDataButton: document.querySelector("#export-data-button"),
+  openFeedbackButton: document.querySelector("#open-feedback-button"),
+  openDataFolderButton: document.querySelector("#open-data-folder-button"),
   modelCenterDialog: document.querySelector("#model-center-dialog"),
   modelCenterClose: document.querySelector("#model-center-close"),
   recommendedModels: document.querySelector("#recommended-models"),
@@ -389,6 +398,7 @@ const state = {
   health: { loading: true, ok: false, services: {}, resources: null },
   imageSettings: loadImageSettings(),
   models: { primary: "", items: [] },
+  systemProfile: null,
   modelCategory: "all",
   language: (localStorage.getItem("vela.desktop.language") ?? localStorage.getItem("openclaw.desktop.language")) === "en" ? "en" : "zh",
   optimistic: null,
@@ -1540,6 +1550,41 @@ function renderModelCenter() {
   }
 }
 
+async function loadSystemProfile() {
+  try {
+    const response = await fetch("/api/system-profile", { headers: { "X-Vela-App-Key": appKey }, cache: "no-store" });
+    if (!response.ok) throw new Error(`System profile failed (${response.status})`);
+    state.systemProfile = await response.json();
+    renderSystemProfile();
+  } catch (error) {
+    console.warn("System profile unavailable", error);
+  }
+}
+
+function renderSystemProfile() {
+  const profile = state.systemProfile;
+  if (!profile) return;
+  const gpu = profile.gpus?.[0]?.name || (profile.accelerator === "metal" ? "Apple Silicon" : "CPU mode");
+  const preferred = profile.recommendations?.find((item) => item.preferred) || profile.recommendations?.[0];
+  const warning = profile.warnings?.find((item) => item.level === "error") || profile.warnings?.[0];
+  const summary = `<div><strong>${escapeHtml(`${profile.totalMemoryGb} GB`)}</strong><span>内存</span></div><div><strong>${escapeHtml(gpu)}</strong><span>计算设备</span></div><div><strong>${escapeHtml(profile.freeDiskGb == null ? "未知" : `${profile.freeDiskGb} GB`)}</strong><span>模型盘可用</span></div><div><strong>${escapeHtml(preferred?.label || "API 模型")}</strong><span>推荐模型</span></div>`;
+  if (els.onboardingSystemProfile) els.onboardingSystemProfile.innerHTML = summary + (warning ? `<p class="system-warning">${escapeHtml(warning.message)}</p>` : "");
+  if (els.supportSystemProfile) els.supportSystemProfile.innerHTML = summary;
+}
+
+async function loadDiagnosticsSummary() {
+  if (!els.diagnosticsSummary) return;
+  try {
+    const response = await fetch("/api/diagnostics", { headers: { "X-Vela-App-Key": appKey }, cache: "no-store" });
+    const payload = await response.json();
+    els.diagnosticsSummary.textContent = payload.files?.length
+      ? `本机保留 ${payload.files.length} 份诊断记录；不会自动上传。`
+      : "未发现崩溃记录；诊断不会自动上传。";
+  } catch {
+    els.diagnosticsSummary.textContent = "诊断读取失败；不会影响正常使用。";
+  }
+}
+
 async function installImageModel(model) {
   const response = await fetch("/api/image-models/install", {
     method: "POST",
@@ -1866,6 +1911,9 @@ async function sendMessage() {
       const qualityNote = payload.qualityWarning
         ? (state.language === "zh" ? "身份一致性未达到理想阈值，已返回本轮最佳图片，可添加参考图继续优化。" : "Identity confidence is below the preferred threshold; the best result is shown and can be refined with a reference image.")
         : "";
+      const bestResultNotice = state.language === "zh"
+        ? "最佳结果返回 · 角色身份还原受模型与参考图影响，不承诺必然高度一致。"
+        : "Best result returned · Character identity fidelity depends on the model and references and is not guaranteed.";
       const imageMessage = {
         role: "assistant",
         content: [
@@ -1874,6 +1922,7 @@ async function sendMessage() {
             ? `\n${state.language === "zh" ? "已生成" : "Generated"} ${payload.width}×${payload.height} · ${payload.resolution ?? "4K"}`
             : "",
           workflowNote ? `\n${workflowNote}` : "",
+          `\n${bestResultNotice}`,
           qualityNote ? `\n${qualityNote}` : ""
         ].join(""),
         timestamp: Date.now(),
@@ -2334,6 +2383,27 @@ els.modelCenterButton?.addEventListener("click", () => {
   els.modelCenterDialog?.showModal();
 });
 els.modelCenterClose?.addEventListener("click", () => els.modelCenterDialog?.close());
+els.supportCenterButton?.addEventListener("click", () => {
+  renderSystemProfile();
+  void loadDiagnosticsSummary();
+  els.supportCenterDialog?.showModal();
+});
+els.supportCenterClose?.addEventListener("click", () => els.supportCenterDialog?.close());
+els.exportDataButton?.addEventListener("click", async () => {
+  els.exportDataButton.disabled = true;
+  try {
+    const response = await fetch("/api/data/export", { method: "POST", headers: { "X-Vela-App-Key": appKey } });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "数据导出失败");
+    if (!payload.canceled) toast(`数据已导出到 ${payload.destination}`);
+  } catch (error) {
+    toast(String(error));
+  } finally {
+    els.exportDataButton.disabled = false;
+  }
+});
+els.openFeedbackButton?.addEventListener("click", () => void fetch("/api/support/feedback", { method: "POST", headers: { "X-Vela-App-Key": appKey } }));
+els.openDataFolderButton?.addEventListener("click", () => void fetch("/api/storage/open", { method: "POST", headers: { "X-Vela-App-Key": appKey } }));
 els.onboardingStorage?.addEventListener("click", () => els.modelStorageSelect?.click());
 els.onboardingModels?.addEventListener("click", () => {
   els.onboardingDialog?.close();
@@ -2550,6 +2620,7 @@ renderAll(true);
 autoResizeComposer();
 void connectVela();
 void loadModels();
+void loadSystemProfile();
 if (!localStorage.getItem("vela.desktop.onboarding")) {
   window.setTimeout(() => els.onboardingDialog?.showModal(), 650);
 }

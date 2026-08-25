@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-            <small>VELA 2.4.5 · LOCAL INTELLIGENCE</small>
+            <small>VELA 2.5.0-beta.1 · PUBLIC BETA</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.4.5 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.5.0-beta.1 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -101,6 +101,7 @@
               </select>
             </label>
             <button class="text-button" id="model-center-button" type="button">模型中心</button>
+            <button class="text-button" id="support-center-button" type="button">支持</button>
             <div class="privacy-badge">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 10V7a4 4 0 0 1 8 0v3M6 10h12v10H6z" />
@@ -325,12 +326,31 @@
         <span>WELCOME TO VELA</span>
         <h2>把目标交给 VELA</h2>
         <p>选择数据盘，然后接入本地模型或云端 API。无需理解复杂的运行环境。</p>
+        <div class="model-center__summary" id="onboarding-system-profile"><div><strong>检测中</strong><span>正在识别硬件与磁盘</span></div></div>
         <div class="onboarding__steps">
           <article><strong>1</strong><div><b>选择数据目录</b><small>模型、缓存和输出可放在非系统盘。</small></div><button id="onboarding-storage" type="button">选择</button></article>
           <article><strong>2</strong><div><b>配置智能模型</b><small>本地运行更私密，API 响应更快。</small></div><button id="onboarding-models" type="button">打开模型中心</button></article>
           <article><strong>3</strong><div><b>运行自动检查</b><small>VELA 会检查 Agent、模型与生图能力。</small></div><button id="onboarding-finish" type="button">开始使用</button></article>
         </div>
         <button class="onboarding__skip" id="onboarding-skip" type="button">稍后设置</button>
+      </dialog>
+
+      <dialog class="model-center" id="support-center-dialog">
+        <div class="model-center__header">
+          <div><span>VELA PUBLIC BETA</span><h2>支持与数据</h2><p>诊断保留在本机，除非你主动导出并发送。</p></div>
+          <button class="model-center__close" id="support-center-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="model-center__summary" id="support-system-profile"></div>
+        <div class="model-center__viewport">
+          <section class="model-center__panel is-active">
+            <div class="model-section-title"><div><h3>隐私</h3><p>默认无遥测、无自动诊断上传；API 请求仅发送给你主动配置的服务。</p></div></div>
+            <div class="model-center__grid">
+              <article class="model-card"><strong>导出我的数据</strong><span>导出会话、记忆、计划与配置；不包含 API Key、模型和缓存。</span><button id="export-data-button" type="button">选择导出目录</button></article>
+              <article class="model-card"><strong>崩溃诊断</strong><span id="diagnostics-summary">正在读取本地诊断…</span><button id="open-feedback-button" type="button">前往问题反馈</button></article>
+              <article class="model-card"><strong>卸载与清理</strong><span>卸载程序默认保留你选择的模型盘；如需彻底清理，请先导出数据，再手动删除数据目录。</span><button id="open-data-folder-button" type="button">打开数据目录</button></article>
+            </div>
+          </section>
+        </div>
       </dialog>
 
       <dialog class="model-center" id="model-center-dialog">
@@ -357,7 +377,7 @@
             <div class="model-center__grid" id="image-models"></div>
           </section>
           <section class="model-center__panel" data-model-panel="api">
-            <div class="model-section-title"><div><h3>云端模型服务</h3><p>API Key 仅在本机通过 Windows 安全加密保存。</p></div></div>
+            <div class="model-section-title"><div><h3>云端模型服务</h3><p>API Key 仅在本机通过操作系统安全存储加密保存。</p></div></div>
             <form class="provider-form" id="provider-form">
               <select id="provider-template"></select>
               <input id="provider-label" placeholder="显示名称" required />
@@ -381,6 +401,6 @@
       />
       <div class="toast-region" id="toast-region" aria-live="polite"></div>
     </div>
-    <script type="module" src="/app.js?v=5.1.3"></script>
+    <script type="module" src="/app.js?v=5.2.0-beta.1"></script>
   </body>
 </html>

@@ -2,17 +2,14 @@ name: VELA Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
-    env:
-      SIGNING_ENABLED: ${{ secrets.WINDOWS_CSC_LINK != '' }}
+  quality:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,41 +21,96 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest
       - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-packages
+          path: dist/*
+
+  desktop-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: integrations/vela-desktop/package-lock.json
-      - name: Install desktop dependencies
-        working-directory: integrations/vela-desktop
+      - working-directory: integrations/vela-desktop
         run: npm ci
-      - name: Test desktop
-        working-directory: integrations/vela-desktop
+      - working-directory: integrations/vela-desktop
         run: npm test
-      - name: Audit desktop dependencies
-        working-directory: integrations/vela-desktop
+      - working-directory: integrations/vela-desktop
         run: npm audit --omit=dev
-      - name: Build unsigned desktop installers
-        if: ${{ env.SIGNING_ENABLED != 'true' }}
+
+  build-windows:
+    needs: [quality, desktop-test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/vela-desktop/package-lock.json
+      - working-directory: integrations/vela-desktop
+        run: npm ci
+      - name: Build Windows installers
         working-directory: integrations/vela-desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run build -- --publish never
-      - name: Build signed desktop installers
-        if: ${{ env.SIGNING_ENABLED == 'true' }}
-        working-directory: integrations/vela-desktop
-        env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-        run: npm run build -- --publish never
-      - uses: softprops/action-gh-release@v2
+        run: npm run build:win -- --publish never
+      - name: Fresh Windows one-click install smoke test
+        shell: pwsh
+        run: ./integrations/vela-desktop/scripts/fresh-install-smoke.ps1
+      - uses: actions/upload-artifact@v4
         with:
-          name: VELA ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
+          name: windows-installers
+          path: |
             integrations/vela-desktop/dist/VELA-Setup-*.exe
             integrations/vela-desktop/dist/VELA-Setup-*.exe.blockmap
             integrations/vela-desktop/dist/VELA-Desktop.exe
             integrations/vela-desktop/dist/latest.yml
+
+  build-macos:
+    needs: [quality, desktop-test]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/vela-desktop/package-lock.json
+      - working-directory: integrations/vela-desktop
+        run: npm ci
+      - name: Build unsigned macOS beta packages
+        working-directory: integrations/vela-desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run build:mac -- --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          path: |
+            integrations/vela-desktop/dist/VELA-*.dmg
+            integrations/vela-desktop/dist/VELA-*.zip
+            integrations/vela-desktop/dist/latest-mac.yml
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: VELA ${{ github.ref_name }} Public Beta
+          generate_release_notes: true
+          prerelease: true
+          files: release-assets/*

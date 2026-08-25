@@ -11,18 +11,22 @@ VELA 是一个可独立运行的桌面 AI Agent。它拥有对话、任务规划
 - 独立 Agent Runtime 与本地持久化会话
 - Planner、Executor、Reflection、有限重试与版本化 Replanning
 - Ollama 本地模型：在模型中心一键下载、安装后即用
-- DeepSeek、OpenAI Compatible 与自定义 API：凭据由 Windows 安全存储保护
+- DeepSeek、OpenAI Compatible 与自定义 API：凭据由操作系统安全存储保护
 - 文件、Git、Python、Shell、浏览器、Home Assistant 等受控工具
 - 本地记忆、RAG 知识库与任务恢复
 - VELA 原生生图、角色参考检索、身份评分与失败回退
-- Windows 原生桌面 UI，支持明暗模式、玻璃质感与任务可视化
+- Windows 与 macOS 桌面 UI，支持明暗模式、玻璃质感与任务可视化
 
-## 一键安装（Windows）
+## 一键安装
 
 普通用户从 GitHub Releases 下载 `VELA-Setup-<版本>.exe`，按向导安装即可。
 无需预先安装 Python、Node.js、uv 或 Ollama。首次启动时 VELA 会打开恢复界面、
-准备独立 Agent Runtime，并引导选择模型与数据目录。卸载应用不会删除会话、模型
-或生成结果。
+检测硬件与模型盘，引导安装匹配的直连模型或配置 API。卸载应用默认不会删除大型模型。
+
+macOS 用户从 Releases 下载与处理器匹配的 `arm64`（Apple Silicon）或 `x64`（Intel）DMG/ZIP。
+首个公测包可能尚未签名和公证，具体限制见 [安装与快速入门](docs/PUBLIC_BETA_INSTALL.md)。
+
+公测文档：[隐私说明](docs/PRIVACY.md) · [已知问题](docs/KNOWN_ISSUES_PUBLIC_BETA.md) · [外部测试计划](docs/PUBLIC_BETA_TEST_PLAN.md)
 
 开发者从源码安装：
 

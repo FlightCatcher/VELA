@@ -196,11 +196,29 @@ def _validate_and_normalize(image: Image.Image, prompt: str) -> tuple[Image.Imag
     }
 
 
+def _runtime_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _configure_pipeline_device(pipe: StableDiffusionXLPipeline, device: str) -> None:
+    if device == "cuda":
+        # 8 GB cards cannot keep all SDXL components resident at once. Model CPU
+        # offload moves only the active component to CUDA and avoids hard OOMs.
+        pipe.enable_model_cpu_offload()
+    else:
+        pipe.to(device)
+
+
 def _load_pipeline(engine: str, model_path: Path) -> StableDiffusionXLPipeline:
     if not model_path.exists():
         raise FileNotFoundError(f"Local model is missing: {model_path}")
+    device = _runtime_device()
     options = {
-        "torch_dtype": torch.float16,
+        "torch_dtype": torch.float32 if device == "cpu" else torch.float16,
         "use_safetensors": True,
         "local_files_only": False,
         "low_cpu_mem_usage": True,
@@ -211,9 +229,7 @@ def _load_pipeline(engine: str, model_path: Path) -> StableDiffusionXLPipeline:
     pipe.enable_attention_slicing("max")
     pipe.enable_vae_slicing()
     pipe.enable_vae_tiling()
-    # 8 GB cards cannot keep all SDXL components resident at once.  Model CPU
-    # offload moves only the active component to CUDA and avoids hard OOMs.
-    pipe.enable_model_cpu_offload()
+    _configure_pipeline_device(pipe, device)
     return pipe
 
 
@@ -264,7 +280,7 @@ def generate(request: dict) -> dict:
         img_pipe.enable_attention_slicing("max")
         img_pipe.enable_vae_slicing()
         img_pipe.enable_vae_tiling()
-        img_pipe.enable_model_cpu_offload()
+        _configure_pipeline_device(img_pipe, _runtime_device())
         strength = 0.28 if str(settings.get("reference")) == "strict" else 0.60 if reference_count > 1 else 0.38
         image = img_pipe(image=reference, strength=strength, **common).images[0]
     else:
