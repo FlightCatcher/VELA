@@ -1,5 +1,14 @@
 # Changelog
 
+## VELA 2.4.4 — always return the best generated image - 2026-08-25
+
+- Fixed named buildings such as cathedrals being misclassified as unfamiliar characters.
+- Limited identity scoring to actual character and reference-image work.
+- Preserve and return the best structurally valid character result when identity confidence is below the preferred threshold.
+- Keep strict split-panel rejection while avoiding empty failures caused only by an imperfect vision score.
+- Show a concise refinement hint when the returned image would benefit from a user reference.
+- Verified real Sophia Cathedral and Luo Tianyi generation through the desktop image backend.
+
 ## VELA 2.4.3 — live image progress recovery - 2026-08-25
 
 - Replaced fixed image percentages with monotonic, phase-aware estimated progress.

@@ -104,6 +104,13 @@ test("real locations use visual research rather than identity locking", () => {
   assert.equal(spec.engine, "ssd1b");
 });
 
+test("named cathedrals are treated as places rather than characters", () => {
+  const spec = analyzeImageRequest("生成一张索菲亚大教堂的图", { engine: "auto" });
+  assert.equal(spec.subjectType, "place");
+  assert.equal(spec.referenceMode, "visual-research");
+  assert.equal(requiresSemanticIdentityReview(spec), false);
+});
+
 test("user reference switches character work to reference editing", () => {
   const spec = analyzeImageRequest("把角色改成冬季服装", { engine: "auto" }, [{ type: "image" }]);
   assert.equal(spec.referenceMode, "user-image");

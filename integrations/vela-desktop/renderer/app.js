@@ -4,7 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
-import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.4.3";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.4.4";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.4.3 · 就绪",
-    healthDegraded: "VELA 2.4.3 · 部分服务离线",
+    healthReady: "VELA 2.4.4 · 就绪",
+    healthDegraded: "VELA 2.4.4 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.4.3 · Ready",
-    healthDegraded: "VELA 2.4.3 · Degraded",
+    healthReady: "VELA 2.4.4 · Ready",
+    healthDegraded: "VELA 2.4.4 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -1863,6 +1863,9 @@ async function sendMessage() {
       const workflowNote = payload.workflow
         ? `${state.language === "zh" ? "工作流" : "Workflow"} · ${workflowEngine}${payload.referenceSource ? ` · ${state.language === "zh" ? "参考" : "reference"}: ${payload.referenceSource}` : ""}`
         : "";
+      const qualityNote = payload.qualityWarning
+        ? (state.language === "zh" ? "身份一致性未达到理想阈值，已返回本轮最佳图片，可添加参考图继续优化。" : "Identity confidence is below the preferred threshold; the best result is shown and can be refined with a reference image.")
+        : "";
       const imageMessage = {
         role: "assistant",
         content: [
@@ -1870,7 +1873,8 @@ async function sendMessage() {
           payload.width && payload.height
             ? `\n${state.language === "zh" ? "已生成" : "Generated"} ${payload.width}×${payload.height} · ${payload.resolution ?? "4K"}`
             : "",
-          workflowNote ? `\n${workflowNote}` : ""
+          workflowNote ? `\n${workflowNote}` : "",
+          qualityNote ? `\n${qualityNote}` : ""
         ].join(""),
         timestamp: Date.now(),
         imageRunId: payload.promptId || runId,

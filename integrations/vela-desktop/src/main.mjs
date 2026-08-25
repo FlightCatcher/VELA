@@ -41,7 +41,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.3";
+const VELA_RELEASE = "2.4.4";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -1167,6 +1167,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
     const maxAttempts = spec.subjectType === "character" || nativeAttachments.length ? 2 : 1;
     const minimumScore = nativeAttachments.length ? 70 : 55;
     let lastReview = null;
+    const fallbackCandidates = [];
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       throwIfImageCancelled(imageJob);
       if (!(await ensureNativeImageEngine())) throw new Error("VELA native image engine could not restart.");
@@ -1196,6 +1197,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       const accepted = !splitPanelDetected
         && (!requiresSemanticReview || !review.available || Number(review.score) >= minimumScore);
       if (accepted) {
+        fallbackCandidates.forEach((candidate) => quarantineRejectedImage(candidate.outputPath));
         setImageJobPhase(imageJob, "finalizing-output");
         return {
           ...payload.result,
@@ -1207,7 +1209,33 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
           workflow: publicWorkflowSummary(spec)
         };
       }
-      quarantineRejectedImage(outputPath);
+      if (splitPanelDetected) {
+        quarantineRejectedImage(outputPath);
+      } else {
+        fallbackCandidates.push({
+          result: payload.result,
+          outputPath,
+          review,
+          attempt,
+          score: Number(review?.score) || 0
+        });
+      }
+    }
+    if (fallbackCandidates.length) {
+      const [best, ...rejected] = fallbackCandidates.sort((left, right) => right.score - left.score);
+      rejected.forEach((candidate) => quarantineRejectedImage(candidate.outputPath));
+      const reasons = best.review?.issues?.length ? best.review.issues.join("；") : best.review?.summary;
+      setImageJobPhase(imageJob, "finalizing-output");
+      return {
+        ...best.result,
+        requestedEngine: spec.engine,
+        referenceSource: referenceSource || null,
+        referenceScore,
+        semanticReview: best.review,
+        qualityWarning: `Identity review was below the preferred threshold${reasons ? `: ${reasons}` : "."}`,
+        generationAttempts: maxAttempts,
+        workflow: publicWorkflowSummary(spec)
+      };
     }
     const reasons = lastReview?.issues?.length ? lastReview.issues.join("；") : lastReview?.summary;
     throw new Error(`Generated image failed semantic quality review${reasons ? `: ${reasons}` : "."}`);
@@ -1432,9 +1460,14 @@ async function generateVerifiedMultiCharacterImage(config, prompt, settings, att
     throw new Error(`High-fidelity image review could not complete${concise ? `: ${concise}` : "."}`);
   }
   if (!review.available || Number(review.score) < 72) {
-    for (const output of result.outputs ?? []) quarantineRejectedImage(String(output?.path ?? ""));
     const reasons = review?.issues?.length ? review.issues.join("；") : review?.summary;
-    throw new Error(`High-fidelity image failed visual review${reasons ? `: ${reasons}` : "."}`);
+    return {
+      ...result,
+      semanticReview: review,
+      qualityWarning: `High-fidelity review was below the preferred threshold${reasons ? `: ${reasons}` : "."}`,
+      generationAttempts: 1,
+      workflow: publicWorkflowSummary(spec)
+    };
   }
   return {
     ...result,

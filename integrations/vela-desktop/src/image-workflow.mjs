@@ -1,6 +1,6 @@
 const CHARACTER_PATTERN = /(角色|人物|少女|少年|女性|男性|女孩|男孩|兽人|拟人|动漫|二次元|同人|有兽焉|辟邪|天禄|洛天依|初音未来|character|girl|boy|woman|man|anime|manga|anthropomorphic|luo tianyi|hatsune miku)/i;
 const KNOWN_IDENTITY_PATTERN = /(有兽焉|辟邪|天禄|洛天依|初音未来|官方角色|真实人物|明星|演员|名人|历史人物|specific character|official character|celebrity|luo tianyi|hatsune miku)/i;
-const REAL_PLACE_PATTERN = /(陆家嘴|东京塔|济州岛|机场|酒店|景区|地标|真实地点|上海|北京|东京|首尔|纽约|巴黎|location|landmark|airport|hotel)/i;
+const REAL_PLACE_PATTERN = /(陆家嘴|东京塔|济州岛|机场|酒店|景区|地标|真实地点|教堂|大教堂|寺庙|宫殿|博物馆|塔楼|上海|北京|东京|首尔|纽约|巴黎|location|landmark|airport|hotel|cathedral|church|temple|palace|museum)/i;
 const PHOTO_PATTERN = /(写实|真实|摄影|照片|手机实拍|抓拍|人像|野生动物|photoreal|realistic|photo|photography|smartphone|portrait|wildlife)/i;
 const ANIME_PATTERN = /(动漫|二次元|国漫|有兽焉|插画|漫画|赛璐璐|拟人|兽人|anime|manga|illustration|cel shading|cartoon)/i;
 const PRODUCT_PATTERN = /(产品|商品|包装|电商|棚拍|海报|logo|product|packaging|commercial)/i;
@@ -104,7 +104,7 @@ function inferIdentityLabel(prompt) {
   const quoted = value.match(/[《「“"]([^》」”"]{2,40})[》」”"]/u);
   const named = value.match(/(?:生成|画|绘制|创作)(?:一张|一个|一幅)?\s*([\p{Script=Han}A-Za-z0-9·_-]{2,20})(?=在|于|和|与|的|，|,|\s)/u);
   const candidate = clean(franchiseCharacter?.[2] || quoted?.[1] || named?.[1]);
-  if (!candidate || /(一个|一位|女孩|少女|人物|角色|动漫|二次元|女性|男性|兽人|真实|未来|城市|风景)/i.test(candidate)) return "";
+  if (!candidate || /(一个|一位|女孩|少女|人物|角色|动漫|二次元|女性|男性|兽人|真实|未来|城市|风景|教堂|大教堂|寺庙|宫殿|博物馆|建筑|地标)/i.test(candidate)) return "";
   return candidate;
 }
 
@@ -120,9 +120,9 @@ function explicitStyle(prompt, settings = {}) {
 
 function subjectType(prompt, identityLabel = "") {
   if (includesAny(prompt, PRODUCT_PATTERN)) return "product";
+  if (includesAny(prompt, REAL_PLACE_PATTERN)) return "place";
   if (identityLabel || includesAny(prompt, CHARACTER_PATTERN)) return "character";
   if (/(动物|鸟|猫|狗|狐狸|鲸|兽|animal|bird|cat|dog|fox|whale)/i.test(prompt)) return "animal";
-  if (includesAny(prompt, REAL_PLACE_PATTERN)) return "place";
   if (includesAny(prompt, LANDSCAPE_PATTERN)) return "environment";
   return "general";
 }
