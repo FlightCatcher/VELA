@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## VELA 2.5.0-beta.7 — cross-platform release fix - 2026-08-25
+
+- Keep the Windows desktop-control implementation importable and type-checkable on Linux and macOS release runners.
+- Restore the complete Windows and macOS installer pipeline after the beta.6 quality job exposed the platform-specific typing issue.
+
 ## VELA 2.5.0-beta.6 — working plugins and desktop control - 2026-08-25
 
 - Reconcile the running Agent process with the permission and plugin configuration instead of silently reusing stale capabilities.

@@ -4,7 +4,7 @@ import ctypes
 import os
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import ClassVar, Protocol, cast
+from typing import Any, ClassVar, Protocol, cast
 
 
 class DesktopBackend(Protocol):
@@ -33,11 +33,15 @@ class WindowsDesktopBackend:
     def __init__(self) -> None:
         if os.name != "nt":
             raise RuntimeError("Desktop control is currently available on Windows only.")
-        self._user32 = ctypes.windll.user32
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            raise RuntimeError("The Win32 desktop API is unavailable.")
+        self._user32: Any = windll.user32
 
     def list_windows(self) -> list[dict[str, object]]:
         windows: list[dict[str, object]] = []
-        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        callback_factory = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+        callback_type = callback_factory(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
         @callback_type
         def collect(hwnd: int, _lparam: int) -> bool:
