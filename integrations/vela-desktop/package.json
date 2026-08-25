@@ -1,6 +1,6 @@
 {
   "name": "vela-desktop",
-  "version": "2.5.0-beta.1",
+  "version": "2.5.0-beta.2",
   "private": true,
   "type": "module",
   "description": "VELA independent local-first AI agent desktop.",
@@ -96,8 +96,20 @@
       "icon": "renderer/vela-icon.png",
       "category": "public.app-category.productivity",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] },
-        { "target": "zip", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "artifactName": "VELA-${version}-${arch}.${ext}"
     },

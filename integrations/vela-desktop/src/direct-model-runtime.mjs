@@ -8,8 +8,13 @@ export const DIRECT_MODEL_ROOTS = Object.freeze([
   "D:\\AI-Models-HotCache\\Models"
 ]);
 
+function portableBasename(filePath) {
+  return filePath.includes("\\") ? path.win32.basename(filePath) : path.posix.basename(filePath);
+}
+
 export function directModelId(modelPath) {
-  const name = path.basename(modelPath, path.extname(modelPath))
+  const basename = portableBasename(modelPath);
+  const name = basename.slice(0, basename.length - path.extname(basename).length)
     .replace(/[^a-z0-9_.-]/gi, "-").toLowerCase();
   const suffix = crypto.createHash("sha1").update(path.resolve(modelPath)).digest("hex").slice(0, 8);
   return `${name}-${suffix}`;
