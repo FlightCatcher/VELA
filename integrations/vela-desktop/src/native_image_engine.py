@@ -176,7 +176,11 @@ def _validate_and_normalize(image: Image.Image, prompt: str) -> tuple[Image.Imag
             b = rgb.crop((x, 0, x + 1, rgb.height))
             baselines.append(float(sum(ImageStat.Stat(ImageChops.difference(a, b)).mean) / 3))
     baseline = sum(baselines) / max(1, len(baselines))
-    split_panel_detected = seam > 6.0 and seam > max(3.0 * baseline, baseline + 4.0)
+    # A centered face, building edge or strong rim light can naturally create a
+    # sharp center transition.  Only mark an obvious seam as advisory; the
+    # orchestration layer must not discard an otherwise valid image solely on
+    # this inexpensive heuristic.
+    split_panel_detected = seam > 24.0 and seam > max(6.0 * baseline, baseline + 18.0)
     monochrome_requested = "strict monochrome" in prompt.lower() or "black, white and gray palette" in prompt.lower()
     monochrome_applied = False
     if monochrome_requested:

@@ -41,7 +41,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.4";
+const VELA_RELEASE = "2.4.5";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -1095,8 +1095,16 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
         referenceSource = known.length ? "known" : "memory";
         referenceScore = 100;
       } else {
-        const candidates = await searchReferenceImage(prompt, spec);
         let lastError;
+        let candidates = [];
+        try {
+          candidates = await searchReferenceImage(prompt, spec);
+        } catch (error) {
+          // Online reference discovery is an optional fidelity aid. Keep the
+          // generation path available when search has no usable result or the
+          // remote source is temporarily unavailable.
+          lastError = error;
+        }
         const evaluatedCandidates = [];
         for (const candidate of candidates.slice(0, 6)) {
           throwIfImageCancelled(imageJob);
@@ -1118,10 +1126,15 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
           referenceSource = best.confidence === "verified" ? "verified-search" : "weak-search";
           localReferencePaths.push(best.path);
         }
-        if (!localPath && settings?.reference === "strict") {
-          throw lastError ?? new Error("No verified reference image was found for strict identity mode.");
+        // Reference discovery improves identity fidelity, but it must never become
+        // a hard gate that prevents the user from receiving an image. Search and
+        // validation can legitimately fail because a site is unavailable, blocks
+        // downloads, or has no usable result. Continue with the compiled identity
+        // traits and expose the fallback in result metadata instead.
+        if (!localPath) {
+          referenceSource = "text-fallback";
+          if (lastError) imageJob.referenceWarning = String(lastError?.message ?? lastError);
         }
-        if (!localPath) referenceSource = "text-fallback";
       }
       throwIfImageCancelled(imageJob);
       if (localPath && !visualSpec) {
@@ -1194,8 +1207,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
         : { available: false, score: null, summary: "Semantic identity review is not required for this subject." };
       lastReview = review;
       const splitPanelDetected = payload?.result?.qualityChecks?.splitPanelDetected === true;
-      const accepted = !splitPanelDetected
-        && (!requiresSemanticReview || !review.available || Number(review.score) >= minimumScore);
+      const accepted = !requiresSemanticReview || !review.available || Number(review.score) >= minimumScore;
       if (accepted) {
         fallbackCandidates.forEach((candidate) => quarantineRejectedImage(candidate.outputPath));
         setImageJobPhase(imageJob, "finalizing-output");
@@ -1205,21 +1217,22 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
           referenceSource: referenceSource || null,
           referenceScore,
           semanticReview: review,
+          qualityWarning: splitPanelDetected
+            ? "A possible center seam was detected; the generated image is returned for user review."
+            : imageJob.referenceWarning
+              ? "No verified reference image was available; VELA generated from identity traits instead."
+            : null,
           generationAttempts: attempt,
           workflow: publicWorkflowSummary(spec)
         };
       }
-      if (splitPanelDetected) {
-        quarantineRejectedImage(outputPath);
-      } else {
-        fallbackCandidates.push({
-          result: payload.result,
-          outputPath,
-          review,
-          attempt,
-          score: Number(review?.score) || 0
-        });
-      }
+      fallbackCandidates.push({
+        result: payload.result,
+        outputPath,
+        review,
+        attempt,
+        score: Number(review?.score) || 0
+      });
     }
     if (fallbackCandidates.length) {
       const [best, ...rejected] = fallbackCandidates.sort((left, right) => right.score - left.score);

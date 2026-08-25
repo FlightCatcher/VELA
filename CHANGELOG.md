@@ -1,5 +1,14 @@
 # Changelog
 
+## VELA 2.4.5 — reliable character image delivery - 2026-08-25
+
+- Recognize possessive character prompts such as “绊爱的正面图” as anime identity work instead of generic photography.
+- Add built-in Kizuna AI identity traits and route known anime characters to the character image engine.
+- Treat online reference discovery as an optional fidelity aid rather than a hard generation gate.
+- Fall back to compiled identity traits when reference search is unavailable or returns no usable result.
+- Stop rejecting completed images because of an advisory center-seam heuristic or a below-target identity score.
+- Verified the exact prompt “绊爱的正面图” through the live VELA chat UI and received an image card backed by a valid local PNG.
+
 ## VELA 2.4.4 — always return the best generated image - 2026-08-25
 
 - Fixed named buildings such as cathedrals being misclassified as unfamiliar characters.
@@ -8,6 +17,8 @@
 - Keep strict split-panel rejection while avoiding empty failures caused only by an imperfect vision score.
 - Show a concise refinement hint when the returned image would benefit from a user reference.
 - Verified real Sophia Cathedral and Luo Tianyi generation through the desktop image backend.
+- Fixed the center-seam heuristic falsely deleting ordinary centered portraits and buildings.
+- Center-seam detection is now advisory and can no longer turn a completed image into an empty failure.
 
 ## VELA 2.4.3 — live image progress recovery - 2026-08-25
 

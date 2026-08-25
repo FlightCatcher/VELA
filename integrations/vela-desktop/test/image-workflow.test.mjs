@@ -72,6 +72,15 @@ test("named anime characters route to identity-aware anime generation", () => {
   assert.equal(spec.knownCharacters[0].id, "luo-tianyi");
 });
 
+test("possessive Kizuna AI prompts preserve identity and use anime reference generation", () => {
+  const spec = analyzeImageRequest("绊爱的正面图", { engine: "auto", style: "natural" });
+  assert.equal(spec.identityLabel, "绊爱");
+  assert.equal(spec.subjectType, "character");
+  assert.equal(spec.style, "anime");
+  assert.equal(spec.engine, "flux2");
+  assert.equal(spec.knownCharacters[0].id, "kizuna-ai");
+});
+
 test("unfamiliar named characters trigger identity reference search", () => {
   const spec = analyzeImageRequest("生成阿波罗在月光森林里散步", { engine: "auto" });
   assert.equal(spec.subjectType, "character");

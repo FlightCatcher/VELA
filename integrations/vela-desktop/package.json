@@ -1,6 +1,6 @@
 {
   "name": "vela-desktop",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "private": true,
   "type": "module",
   "description": "VELA independent local-first AI agent desktop.",
