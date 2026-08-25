@@ -43,8 +43,8 @@ brew trust FlightCatcher/vela
 brew install --cask vela
 ```
 
-详见 [包管理器安装说明](docs/PACKAGE_INSTALL.md)。WinGet 清单已经准备好，
-但首次进入微软官方软件源仍需通过社区仓库审核。
+详见 [包管理器安装说明](docs/PACKAGE_INSTALL.md)。WinGet 首次提交已进入
+[微软社区仓库审核](https://github.com/microsoft/winget-pkgs/pull/423803)。
 
 开发者从源码安装：
 

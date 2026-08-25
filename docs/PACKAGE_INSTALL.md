@@ -11,8 +11,8 @@ Upgrade later with `scoop update vela`.
 
 ## Windows — WinGet
 
-The WinGet manifest is ready under `packages/winget`. Its first submission must
-pass Microsoft's automated checks and moderator review before this command works:
+The first WinGet submission is now under [Microsoft review](https://github.com/microsoft/winget-pkgs/pull/423803).
+It must pass automated checks and moderator review before this command works:
 
 ```powershell
 winget install --id FlightCatcher.VELA --exact
