@@ -4,7 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
-import { clampImageProgress, messageListRenderKey } from "./message-render-state.js";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.4.3";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.4.2 · 就绪",
-    healthDegraded: "VELA 2.4.2 · 部分服务离线",
+    healthReady: "VELA 2.4.3 · 就绪",
+    healthDegraded: "VELA 2.4.3 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.4.2 · Ready",
-    healthDegraded: "VELA 2.4.2 · Degraded",
+    healthReady: "VELA 2.4.3 · Ready",
+    healthDegraded: "VELA 2.4.3 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -380,6 +380,8 @@ const state = {
   activeImageRun: false,
   cancelledTurn: null,
   imageProgress: { value: 0, stage: "", detail: "" },
+  imageStatus: null,
+  imageStatusInFlight: false,
   imageQueueSeen: false,
   imageStartedAt: 0,
   imageStatusTimer: null,
@@ -2068,6 +2070,8 @@ function stopImageStatusPolling() {
   state.activeImageRun = false;
   state.imageQueueSeen = false;
   state.imageStartedAt = 0;
+  state.imageStatus = null;
+  state.imageStatusInFlight = false;
   state.imageProgress = { value: 0, stage: "", detail: "" };
 }
 
@@ -2092,33 +2096,44 @@ function imagePhasePresentation(status, elapsedSeconds) {
   const workflow = status?.workflow ?? {};
   const engine = workflow.engine === "flux2" ? "参考编辑" : workflow.engine === "realistic" ? "写实摄影" : workflow.engine === "anime" ? "动漫角色" : "通用概念";
   const phases = {
-    "analyzing-request": [6, zh ? "理解画面需求" : "Understanding the image", zh ? "提取主体、场景、动作、镜头和限制" : "Extracting subject, scene, camera and constraints"],
-    "compiling-spec": [12, zh ? "建立画面规格" : "Building the visual spec", zh ? `题材：${workflow.subjectType ?? "自动"} · ${engine}` : `Subject: ${workflow.subjectType ?? "auto"} · ${engine}`],
-    "reference-search": [18, zh ? "搜索视觉参考" : "Searching visual references", zh ? "优先查找官方角色图或真实地点特征" : "Prioritizing official identity or real-location traits"],
-    "reference-validation": [24, zh ? "验证参考图片" : "Validating references", zh ? "识别并排除错人、拼图和低质量缩略图" : "Rejecting mismatches, collages and poor thumbnails"],
-    "reference-vision": [30, zh ? "识别稳定特征" : "Inspecting stable traits", zh ? "提取轮廓、配色、标记、材质和地标结构" : "Reading silhouette, palette, markings and landmark structure"],
-    "prompt-compilation": [36, zh ? "编译镜头语言" : "Compiling camera language", zh ? "组合构图、机位、光线、尺度和禁止项" : "Combining composition, camera, light, scale and exclusions"],
-    "starting-compatible-engine": [40, zh ? "启动兼容生图引擎" : "Starting compatible image engine", zh ? "独立引擎未就绪，正在自动切换本机可用后端" : "The native engine is unavailable; switching to an installed local backend"],
-    "loading-model": [42, zh ? "加载专用模型" : "Loading the specialist model", zh ? `已选择：${engine}` : `Selected: ${engine}`],
-    generating: [Math.min(88, 48 + elapsedSeconds * 0.45), zh ? "本地生成中" : "Generating locally", zh ? "正在执行扩散采样与细节合成" : "Running diffusion sampling and detail synthesis"],
-    "finalizing-output": [96, zh ? "整理最终图片" : "Finalizing output", zh ? "保存结果与画面规格" : "Saving the result and visual specification"]
+    "analyzing-request": [zh ? "理解画面需求" : "Understanding the image", zh ? "提取主体、场景、动作、镜头和限制" : "Extracting subject, scene, camera and constraints"],
+    "compiling-spec": [zh ? "建立画面规格" : "Building the visual spec", zh ? `题材：${workflow.subjectType ?? "自动"} · ${engine}` : `Subject: ${workflow.subjectType ?? "auto"} · ${engine}`],
+    "reference-search": [zh ? "搜索视觉参考" : "Searching visual references", zh ? "优先查找官方角色图或真实地点特征" : "Prioritizing official identity or real-location traits"],
+    "reference-validation": [zh ? "验证参考图片" : "Validating references", zh ? "识别并排除错人、拼图和低质量缩略图" : "Rejecting mismatches, collages and poor thumbnails"],
+    "reference-vision": [zh ? "识别稳定特征" : "Inspecting stable traits", zh ? "提取轮廓、配色、标记、材质和地标结构" : "Reading silhouette, palette, markings and landmark structure"],
+    "prompt-compilation": [zh ? "编译镜头语言" : "Compiling camera language", zh ? "组合构图、机位、光线、尺度和禁止项" : "Combining composition, camera, light, scale and exclusions"],
+    "starting-compatible-engine": [zh ? "启动兼容生图引擎" : "Starting compatible image engine", zh ? "独立引擎未就绪，正在自动切换本机可用后端" : "The native engine is unavailable; switching to an installed local backend"],
+    "loading-model": [zh ? "加载专用模型" : "Loading the specialist model", zh ? `已选择：${engine}` : `Selected: ${engine}`],
+    generating: [zh ? "本地生成中" : "Generating locally", zh ? "正在执行扩散采样与细节合成" : "Running diffusion sampling and detail synthesis"],
+    "retrying-quality": [zh ? "正在改善画面" : "Improving image quality", zh ? "首张未达到质量阈值，正在安全重试" : "The first result missed the quality threshold; retrying safely"],
+    "validating-output": [zh ? "检查生成结果" : "Validating the result", zh ? "正在检查画面完整性与角色一致性" : "Checking image integrity and identity consistency"],
+    upscaling: [zh ? "提升图片分辨率" : "Upscaling the image", zh ? "正在增强细节并保存高分辨率版本" : "Enhancing detail and saving the high-resolution version"],
+    "finalizing-output": [zh ? "整理最终图片" : "Finalizing output", zh ? "保存结果与画面规格" : "Saving the result and visual specification"]
   };
-  const [value, stage, detail] = phases[status?.activePhase] ?? [Math.min(88, 24 + elapsedSeconds * 0.55), t("progressGenerating"), zh ? "执行本地生图工作流" : "Running the local image workflow"];
+  const phase = status?.activePhase || "analyzing-request";
+  const phaseElapsedSeconds = Math.max(0, Number(status?.phaseElapsedMs ?? 0) / 1000);
+  const [stage, baseDetail] = phases[phase] ?? [t("progressGenerating"), zh ? "执行本地生图工作流" : "Running the local image workflow"];
+  const value = estimateImageProgress({ phase, phaseElapsedSeconds, previous: state.imageProgress.value });
+  const elapsedLabel = zh ? `已用时 ${Math.floor(elapsedSeconds)} 秒` : `${Math.floor(elapsedSeconds)}s elapsed`;
+  const detail = `${baseDetail} · ${elapsedLabel}`;
   return { value, stage, detail };
 }
 
 async function refreshImageStatus() {
-  if (!state.pending || !state.activeImageRun) return;
+  if (!state.pending || !state.activeImageRun || state.imageStatusInFlight) return;
+  state.imageStatusInFlight = true;
   const elapsedSeconds = Math.max(0, (Date.now() - state.imageStartedAt) / 1000);
   try {
     const status = await fetch("/api/image-status", {
       headers: { "X-Vela-App-Key": appKey },
-      cache: "no-store"
+      cache: "no-store",
+      signal: AbortSignal.timeout(3500)
     }).then((response) => response.json());
+    state.imageStatus = status;
 
     if (!status.online) {
       state.imageProgress = {
-        value: 1,
+        value: Math.max(state.imageProgress.value, 1),
         stage: t("progressOffline"),
         detail: state.language === "zh" ? "正在检查 VELA 图像引擎" : "Checking VELA image engine"
       };
@@ -2156,19 +2171,44 @@ async function refreshImageStatus() {
     }
     renderMessages();
   } catch {
-    state.imageProgress = {
-      value: Math.min(10, 2 + elapsedSeconds * 0.1),
+      state.imageProgress = {
+        value: Math.max(state.imageProgress.value, Math.min(10, 2 + elapsedSeconds * 0.1)),
       stage: t("progressPreparing"),
       detail: state.language === "zh" ? "正在连接本地生图状态" : "Connecting to local image status"
     };
     renderMessages();
+  } finally {
+    state.imageStatusInFlight = false;
   }
+}
+
+function tickImageProgress() {
+  if (!state.pending || !state.activeImageRun) return;
+  const elapsedSeconds = Math.max(0, (Date.now() - state.imageStartedAt) / 1000);
+  if (state.imageStatus?.running > 0) {
+    const phaseStartedAt = Number(state.imageStatus.phaseStartedAt) || Date.now();
+    state.imageProgress = imagePhasePresentation({
+      ...state.imageStatus,
+      phaseElapsedMs: Math.max(0, Date.now() - phaseStartedAt)
+    }, elapsedSeconds);
+  } else if (state.imageStatusInFlight) {
+    state.imageProgress = {
+      ...state.imageProgress,
+      detail: state.language === "zh"
+        ? `本地引擎仍在工作 · 已用时 ${Math.floor(elapsedSeconds)} 秒`
+        : `The local engine is still working · ${Math.floor(elapsedSeconds)}s elapsed`
+    };
+  }
+  renderMessages();
 }
 
 function startImageStatusPolling() {
   clearInterval(state.imageStatusTimer);
   void refreshImageStatus();
-  state.imageStatusTimer = setInterval(() => void refreshImageStatus(), 1000);
+  state.imageStatusTimer = setInterval(() => {
+    tickImageProgress();
+    void refreshImageStatus();
+  }, 1000);
 }
 
 function startPolling() {

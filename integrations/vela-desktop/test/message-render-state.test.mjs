@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampImageProgress, messageListRenderKey } from "../renderer/message-render-state.js";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "../renderer/message-render-state.js";
 
 test("thinking phase changes do not invalidate the full message list", () => {
   const base = {
@@ -37,4 +37,16 @@ test("image progress is bounded for the progress presentation", () => {
   assert.equal(clampImageProgress(-5), 1);
   assert.equal(clampImageProgress(51.6), 52);
   assert.equal(clampImageProgress(120), 99);
+});
+
+test("image progress advances within a long-running phase without going backwards", () => {
+  const early = estimateImageProgress({ phase: "loading-model", phaseElapsedSeconds: 2, previous: 42 });
+  const later = estimateImageProgress({ phase: "loading-model", phaseElapsedSeconds: 60, previous: early });
+  assert.ok(later > early);
+  assert.equal(estimateImageProgress({ phase: "compiling-spec", phaseElapsedSeconds: 1, previous: 55 }), 55);
+});
+
+test("output validation and finalization report near-complete progress", () => {
+  assert.ok(estimateImageProgress({ phase: "validating-output", phaseElapsedSeconds: 1 }) >= 90);
+  assert.ok(estimateImageProgress({ phase: "finalizing-output", phaseElapsedSeconds: 1 }) >= 97);
 });

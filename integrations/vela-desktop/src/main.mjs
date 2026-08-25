@@ -41,7 +41,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.2";
+const VELA_RELEASE = "2.4.3";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -1007,6 +1007,12 @@ function throwIfImageCancelled(job = activeImageJob) {
   if (job?.cancelled) throw new Error("Image generation cancelled.");
 }
 
+function setImageJobPhase(job, phase) {
+  if (!job || job.phase === phase) return;
+  job.phase = phase;
+  job.phaseStartedAt = Date.now();
+}
+
 function comfyExecutionError(record, fallbackMessage) {
   const messages = Array.isArray(record?.status?.messages) ? [...record.status.messages].reverse() : [];
   for (const entry of messages) {
@@ -1053,6 +1059,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
     promptId: `native-${jobId}`,
     phase: "analyzing-request",
     startedAt: Date.now(),
+    phaseStartedAt: Date.now(),
     workflow: publicWorkflowSummary(spec),
     cancelled: false,
     worker: null,
@@ -1061,7 +1068,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
   activeImageJob = imageJob;
   let referenceDirectory = "";
   try {
-    imageJob.phase = "compiling-spec";
+    setImageJobPhase(imageJob, "compiling-spec");
     const preparedPrompt = await prepareImagePrompt(prompt, spec);
     throwIfImageCancelled(imageJob);
     let nativeAttachments = attachments.filter((item) => item?.type === "image" && item?.content).slice(0, 2);
@@ -1071,7 +1078,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
     let referenceScore = nativeAttachments.length ? 100 : null;
     const wantsReference = spec.needsReference && settings?.reference !== "off";
     if (wantsReference && !nativeAttachments.length) {
-      imageJob.phase = "reference-search";
+      setImageJobPhase(imageJob, "reference-search");
       referenceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "vela-native-reference-"));
       let localPath = "";
       const known = findKnownReferences(prompt);
@@ -1095,7 +1102,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
           throwIfImageCancelled(imageJob);
           try {
             const candidatePath = await downloadReferenceImage(candidate, referenceDirectory);
-            imageJob.phase = "reference-validation";
+            setImageJobPhase(imageJob, "reference-validation");
             const evaluated = await evaluateReferenceImage(candidatePath, prompt);
             evaluatedCandidates.push({ path: candidatePath, ...evaluated });
             if (evaluated.score >= 78) break;
@@ -1118,7 +1125,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       }
       throwIfImageCancelled(imageJob);
       if (localPath && !visualSpec) {
-        imageJob.phase = "reference-vision";
+        setImageJobPhase(imageJob, "reference-vision");
         visualSpec = await inspectReferenceImage(localPath, prompt).catch(() => "");
       }
       if (localPath && spec.referenceMode !== "visual-research") {
@@ -1145,7 +1152,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
         localReferencePaths.push(referencePath);
       });
     }
-    imageJob.phase = "prompt-compilation";
+    setImageJobPhase(imageJob, "prompt-compilation");
     const nativePrompt = compileImagePrompt(spec, preparedPrompt, visualSpec, nativeAttachments.length > 0);
     imageJob.compiled = {
       engine,
@@ -1153,7 +1160,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       referenceScore,
       promptLength: nativePrompt.length
     };
-    imageJob.phase = "loading-model";
+    setImageJobPhase(imageJob, "loading-model");
     if (!(await ensureNativeImageEngine())) throw new Error("VELA native image engine could not start.");
     throwIfImageCancelled(imageJob);
     imageJob.worker = nativeImageProcess;
@@ -1164,7 +1171,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       throwIfImageCancelled(imageJob);
       if (!(await ensureNativeImageEngine())) throw new Error("VELA native image engine could not restart.");
       imageJob.worker = nativeImageProcess;
-      imageJob.phase = attempt === 1 ? "generating" : "retrying-quality";
+      setImageJobPhase(imageJob, attempt === 1 ? "generating" : "retrying-quality");
       const response = await fetch(`http://${APP_HOST}:${NATIVE_IMAGE_PORT}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1178,7 +1185,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       const payload = await response.json();
       if (!payload?.ok) throw new Error(String(payload?.error ?? "Native image generation failed."));
       const outputPath = String(payload?.result?.outputs?.[0]?.path ?? "");
-      imageJob.phase = "validating-output";
+      setImageJobPhase(imageJob, "validating-output");
       await releaseNativeImageEngineForReview(imageJob);
       const requiresSemanticReview = requiresSemanticIdentityReview(spec, nativeAttachments);
       const review = requiresSemanticReview
@@ -1189,7 +1196,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       const accepted = !splitPanelDetected
         && (!requiresSemanticReview || !review.available || Number(review.score) >= minimumScore);
       if (accepted) {
-        imageJob.phase = "finalizing-output";
+        setImageJobPhase(imageJob, "finalizing-output");
         return {
           ...payload.result,
           requestedEngine: spec.engine,
@@ -2455,6 +2462,9 @@ function createServer() {
           runningPromptId: activeImageJob?.promptId ?? "",
           pendingPromptId: "",
           activePhase: activeImageJob?.phase ?? "",
+          startedAt: activeImageJob?.startedAt ?? null,
+          phaseStartedAt: activeImageJob?.phaseStartedAt ?? activeImageJob?.startedAt ?? null,
+          phaseElapsedMs: activeImageJob ? Math.max(0, Date.now() - (activeImageJob.phaseStartedAt ?? activeImageJob.startedAt ?? Date.now())) : 0,
           workflow: activeImageJob?.workflow ?? null,
           compiled: activeImageJob?.compiled ?? null,
           cancellable: Boolean(activeImageJob),

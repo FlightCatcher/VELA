@@ -1,5 +1,14 @@
 # Changelog
 
+## VELA 2.4.3 — live image progress recovery - 2026-08-25
+
+- Replaced fixed image percentages with monotonic, phase-aware estimated progress.
+- Added backend phase timestamps and a renderer heartbeat so long model loads and sampling visibly advance.
+- Added short status-request timeouts and overlap protection to prevent polling stalls.
+- Added explicit progress states for quality retry, validation and upscaling.
+- Versioned renderer modules so an installed upgrade cannot keep running stale cached progress code.
+- Verified real generation, cancellation, invalid input and post-cancellation recovery.
+
 ## VELA 2.4.2 — resilient chat and liquid motion - 2026-08-25
 
 - Recover stale local conversation identifiers automatically instead of returning a chat 500 error.
