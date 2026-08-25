@@ -1,0 +1,23 @@
+{
+  "version": "2.5.0-beta.4",
+  "description": "Local-first modular AI agent desktop application",
+  "homepage": "https://github.com/FlightCatcher/VELA",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/FlightCatcher/VELA/releases/download/v2.5.0-beta.4/VELA-Desktop.exe#/VELA.exe",
+      "hash": "24941ea09ea0576bcdd3adf14414379c960702da3703a5b790b0f756186580fb"
+    }
+  },
+  "shortcuts": [["VELA.exe", "VELA"]],
+  "checkver": {
+    "github": "https://github.com/FlightCatcher/VELA"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/FlightCatcher/VELA/releases/download/v$version/VELA-Desktop.exe#/VELA.exe"
+      }
+    }
+  }
+}

@@ -28,6 +28,23 @@ macOS 用户从 Releases 下载与处理器匹配的 `arm64`（Apple Silicon）�
 
 公测文档：[隐私说明](docs/PRIVACY.md) · [已知问题](docs/KNOWN_ISSUES_PUBLIC_BETA.md) · [外部测试计划](docs/PUBLIC_BETA_TEST_PLAN.md)
 
+包管理器安装：
+
+```powershell
+# Windows (Scoop)
+scoop bucket add vela https://github.com/FlightCatcher/scoop-vela
+scoop install vela
+```
+
+```bash
+# macOS (Homebrew)
+brew tap FlightCatcher/vela
+brew install --cask vela
+```
+
+详见 [包管理器安装说明](docs/PACKAGE_INSTALL.md)。WinGet 清单已经准备好，
+但首次进入微软官方软件源仍需通过社区仓库审核。
+
 开发者从源码安装：
 
 ```powershell
