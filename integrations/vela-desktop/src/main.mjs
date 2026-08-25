@@ -17,7 +17,8 @@ import {
   parseVisualReviewResponse,
   publicWorkflowSummary,
   selectReferenceCandidate,
-  imageJobIsStale
+  imageJobIsStale,
+  requiresSemanticIdentityReview
 } from "./image-workflow.mjs";
 import {
   loadModelCenterConfig,
@@ -34,12 +35,13 @@ import {
 } from "./direct-model-runtime.mjs";
 import { imageModelCatalog, imageModelInstallAssets } from "./image-model-catalog.mjs";
 import { ensureStorageDirectories, loadStorageConfig, saveStorageConfig } from "./storage-config.mjs";
+import { isMissingSessionError } from "./session-recovery.mjs";
 
 const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.1";
+const VELA_RELEASE = "2.4.2";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -214,24 +216,6 @@ const mimeTypes = {
   ".webm": "video/webm",
   ".webp": "image/webp"
 };
-
-function setKnowledgeDownloadPaused(paused) {
-  if (process.platform !== "win32") return Promise.resolve(false);
-  const action = paused ? "Suspend-BitsTransfer" : "Resume-BitsTransfer";
-  const requiredState = paused ? "Transferring" : "Suspended";
-  const script = [
-    "$job = Get-BitsTransfer -Name 'VELA-Knowledge-ZH-Wikipedia-2026-05' -ErrorAction SilentlyContinue",
-    `if ($job -and $job.JobState -eq '${requiredState}') { $job | ${action}; Write-Output 'changed' }`
-  ].join("; ");
-  return new Promise((resolve) => {
-    execFile(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { timeout: 12000, windowsHide: true },
-      (_error, stdout) => resolve(String(stdout ?? "").includes("changed"))
-    );
-  });
-}
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -513,7 +497,9 @@ async function prepareImagePrompt(prompt, spec = null) {
     const response = await fetch("http://127.0.0.1:11434/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(45000),
+      // Prompt translation is an optimization, never a reason to hold the UI.
+      // Fall back to the original prompt quickly when the local chat model is cold.
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         model,
         keep_alive: 0,
@@ -1194,10 +1180,12 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       const outputPath = String(payload?.result?.outputs?.[0]?.path ?? "");
       imageJob.phase = "validating-output";
       await releaseNativeImageEngineForReview(imageJob);
-      const review = await evaluateGeneratedImage(outputPath, prompt, spec, localReferencePaths);
+      const requiresSemanticReview = requiresSemanticIdentityReview(spec, nativeAttachments);
+      const review = requiresSemanticReview
+        ? await evaluateGeneratedImage(outputPath, prompt, spec, localReferencePaths)
+        : { available: false, score: null, summary: "Semantic identity review is not required for this subject." };
       lastReview = review;
       const splitPanelDetected = payload?.result?.qualityChecks?.splitPanelDetected === true;
-      const requiresSemanticReview = nativeAttachments.length > 0 || spec.subjectType === "character";
       const accepted = !splitPanelDetected
         && (!requiresSemanticReview || !review.available || Number(review.score) >= minimumScore);
       if (accepted) {
@@ -2345,13 +2333,11 @@ function createServer() {
         }
         const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
         const attachments = Array.isArray(payload?.attachments) ? payload.attachments.slice(0, 2) : [];
-        const knowledgeDownloadPaused = await setKnowledgeDownloadPaused(true);
-        try {
-          const spec = analyzeImageRequest(prompt, settings, attachments);
-          sendJson(res, 200, await generateWithAvailableImageBackend(prompt, settings, attachments, spec));
-        } finally {
-          if (knowledgeDownloadPaused) await setKnowledgeDownloadPaused(false);
-        }
+        // BITS is already a low-priority background transfer. Suspending it from the
+        // request path can block indefinitely on some Windows installations and leave
+        // the renderer showing a preparation card while no image worker is running.
+        const spec = analyzeImageRequest(prompt, settings, attachments);
+        sendJson(res, 200, await generateWithAvailableImageBackend(prompt, settings, attachments, spec));
         return;
       }
 
@@ -2411,7 +2397,15 @@ function createServer() {
           return;
         }
         const payload = JSON.parse(await readRequestBody(req));
-        sendJson(res, 200, (await requestOcuJson("/v1/chat", "POST", payload, 900000)).data);
+        try {
+          sendJson(res, 200, (await requestOcuJson("/v1/chat", "POST", payload, 900000)).data);
+        } catch (error) {
+          if (!isMissingSessionError(error)) throw error;
+          const created = (await requestOcuJson("/v1/sessions", "POST", { title: "Recovered conversation" }, 10000)).data;
+          const recoveredPayload = { ...payload, session_id: created.id };
+          const recovered = (await requestOcuJson("/v1/chat", "POST", recoveredPayload, 900000)).data;
+          sendJson(res, 200, { ...recovered, recovered_session: true });
+        }
         return;
       }
 

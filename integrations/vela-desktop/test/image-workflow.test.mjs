@@ -9,6 +9,7 @@ import {
   configureMultiReferenceIpAdapter,
   parseVisualReviewResponse,
   publicWorkflowSummary,
+  requiresSemanticIdentityReview,
   selectReferenceCandidate,
   imageJobIsStale
 } from "../src/image-workflow.mjs";
@@ -228,4 +229,21 @@ test("visual review parser recovers useful fields from malformed JSON", () => {
 
 test("visual review parser rejects prose without a score", () => {
   assert.equal(parseVisualReviewResponse("I cannot inspect the image."), null);
+});
+
+test("generic images return without semantic identity review", () => {
+  const spec = analyzeImageRequest("minimal product photo of a glass sphere", { engine: "auto" });
+  assert.equal(requiresSemanticIdentityReview(spec), false);
+});
+
+test("characters and attached references retain semantic identity review", () => {
+  const character = analyzeImageRequest("anime character standing in a city", { engine: "auto" });
+  assert.equal(requiresSemanticIdentityReview(character), true);
+  assert.equal(
+    requiresSemanticIdentityReview(
+      analyzeImageRequest("minimal product photo", { engine: "auto" }),
+      [{ type: "image", content: "base64" }]
+    ),
+    true
+  );
 });

@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.4.1 · 就绪",
-    healthDegraded: "VELA 2.4.1 · 部分服务离线",
+    healthReady: "VELA 2.4.2 · 就绪",
+    healthDegraded: "VELA 2.4.2 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.4.1 · Ready",
-    healthDegraded: "VELA 2.4.1 · Degraded",
+    healthReady: "VELA 2.4.2 · Ready",
+    healthDegraded: "VELA 2.4.2 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -531,6 +531,15 @@ function updateCurrentSession(patch) {
   saveSessions();
   renderSessions();
   renderHeader();
+}
+
+function adoptRecoveredSession(sessionId) {
+  const nextKey = String(sessionId ?? "").trim();
+  if (!nextKey || nextKey === currentSessionKey) return;
+  const existing = currentSession();
+  if (existing) existing.key = nextKey;
+  currentSessionKey = nextKey;
+  saveSessions();
 }
 
 async function newSession() {
@@ -1835,7 +1844,7 @@ async function sendMessage() {
           settings: state.imageSettings,
           attachments: attachments.filter((item) => item.type === "image").slice(0, 1)
         }),
-        signal: requestController.signal
+        signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(900000)])
       });
       const payload = await response.json();
       if (!runCoordinator.isCurrent(activeRun)) return;
@@ -1898,6 +1907,7 @@ async function sendMessage() {
     const payload = await response.json();
     if (!runCoordinator.isCurrent(activeRun)) return;
     if (!response.ok) throw new Error(payload.error || t("sendFailed"));
+    adoptRecoveredSession(payload.session_id);
     state.history = [
       ...state.history.filter((item) => !item._optimistic),
       { role: "user", content: rawText, timestamp: sentAt },
@@ -1911,7 +1921,7 @@ async function sendMessage() {
     stopThinkingFlow();
     renderAll(true);
   } catch (error) {
-    if (!runCoordinator.isCurrent(activeRun) || /cancelled|canceled|aborted|fetch failed/i.test(String(error))) return;
+    if (!runCoordinator.isCurrent(activeRun) || requestController.signal.aborted) return;
     if (isImageRequest) {
       state.optimistic = null;
       saveLocalImageMessage({

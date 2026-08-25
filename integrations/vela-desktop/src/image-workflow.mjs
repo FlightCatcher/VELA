@@ -273,6 +273,12 @@ export function imageJobIsStale(job, options = {}) {
   return Number.isFinite(now) && now - startedAt > maxAgeMs;
 }
 
+export function requiresSemanticIdentityReview(spec, attachments = []) {
+  const hasReference = Array.isArray(attachments)
+    && attachments.some((item) => item?.type === "image" && item?.content);
+  return hasReference || spec?.subjectType === "character";
+}
+
 export function compileImagePrompt(spec, translatedPrompt = "", visualSpec = "", referenceLocked = false) {
   const styleLanguage = spec.style === "photo" || spec.style === "natural"
     ? "realistic smartphone or professional photography as requested, natural exposure, plausible materials, subtle imperfections"

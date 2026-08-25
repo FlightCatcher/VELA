@@ -1714,7 +1714,8 @@ textarea:focus-visible {
   box-shadow: var(--liquid-shadow-soft), inset 0 1px var(--liquid-highlight) !important;
   -webkit-backdrop-filter: blur(34px) saturate(138%);
   backdrop-filter: blur(34px) saturate(138%);
-  animation: thinking-card-breathe 2.8s ease-in-out infinite !important;
+  isolation: isolate;
+  animation: glass-card-arrive 420ms var(--apple-ease) both !important;
 }
 
 .thinking-card::after {
@@ -1722,7 +1723,7 @@ textarea:focus-visible {
   inset: 0;
   content: "";
   pointer-events: none;
-  background: linear-gradient(112deg, transparent 25%, rgba(255, 255, 255, 0.24) 48%, transparent 72%);
+  background: linear-gradient(112deg, transparent 25%, rgba(255, 255, 255, 0.30) 48%, transparent 72%);
   transform: translateX(-115%);
   animation: liquid-sheen 2.7s var(--apple-ease) infinite;
 }
@@ -1735,6 +1736,7 @@ textarea:focus-visible {
   border-radius: 50%;
   background: var(--liquid-glass-strong);
   box-shadow: inset 0 1px var(--liquid-highlight), 0 6px 18px rgba(0, 0, 0, 0.10);
+  animation: glass-lens-breathe 2.2s ease-in-out infinite;
 }
 
 .thinking-visual i {
@@ -1750,8 +1752,9 @@ textarea:focus-visible {
   inset: 9px;
   border-top-color: transparent;
   border-right-color: var(--apple-ink);
+  opacity: 0.42;
   animation-direction: reverse;
-  animation-duration: 1.05s;
+  animation-duration: 1.6s;
 }
 
 .thinking-visual b {
@@ -1783,22 +1786,41 @@ textarea:focus-visible {
 }
 
 .thinking-copy .typing span {
-  width: 13px;
-  height: 2px;
+  width: 5px;
+  height: 5px;
   background: var(--apple-ink-faint) !important;
   border-radius: 999px;
-  transform-origin: left center;
-  animation: thinking-wave 1.25s ease-in-out infinite !important;
+  transform-origin: center;
+  animation: thinking-wave 1.35s ease-in-out infinite !important;
 }
 
-.thinking-copy .typing span:nth-child(2) { width: 20px; animation-delay: 130ms !important; }
-.thinking-copy .typing span:nth-child(3) { width: 9px; animation-delay: 260ms !important; }
+.thinking-copy .typing span:nth-child(2) { animation-delay: 150ms !important; }
+.thinking-copy .typing span:nth-child(3) { animation-delay: 300ms !important; }
 
 /* Reply and media reveal motion. */
 .message-row--assistant.message-row--fresh .message-copy > *,
 .message-row--assistant.message-row--fresh .media-grid,
 .message-row--assistant.message-row--fresh .file-grid {
-  animation: reply-reveal 560ms var(--apple-ease) both;
+  animation: reply-reveal 420ms var(--apple-ease) both;
+}
+
+.message-row--assistant.message-row--fresh > .message-body:not(.thinking-card):not(.image-progress-card) {
+  position: relative;
+  isolation: isolate;
+}
+
+.message-row--assistant.message-row--fresh > .message-body:not(.thinking-card):not(.image-progress-card)::before {
+  position: absolute;
+  z-index: -1;
+  inset: -10px -14px;
+  content: "";
+  pointer-events: none;
+  border-radius: 18px;
+  background: linear-gradient(105deg, transparent 12%, color-mix(in srgb, var(--liquid-glass-strong) 78%, transparent) 48%, transparent 84%);
+  box-shadow: inset 0 1px var(--liquid-highlight);
+  opacity: 0;
+  transform: translateX(-8px) scale(0.985);
+  animation: reply-glass-wash 620ms var(--apple-ease) both;
 }
 
 .message-row--assistant.message-row--fresh .message-copy > *:nth-child(2) { animation-delay: 45ms; }
@@ -1814,7 +1836,8 @@ textarea:focus-visible {
   box-shadow: var(--liquid-shadow), inset 0 1px var(--liquid-highlight) !important;
   -webkit-backdrop-filter: blur(40px) saturate(140%) !important;
   backdrop-filter: blur(40px) saturate(140%) !important;
-  animation: image-card-float 3.6s ease-in-out infinite !important;
+  isolation: isolate;
+  animation: glass-card-arrive 420ms var(--apple-ease) both !important;
 }
 
 .image-progress-card::before {
@@ -1838,7 +1861,7 @@ textarea:focus-visible {
 }
 
 .image-progress-orb {
-  animation: image-orb-float 2.5s ease-in-out infinite;
+  animation: glass-lens-breathe 2.4s ease-in-out infinite;
 }
 
 .image-progress-orb i {
@@ -1957,28 +1980,29 @@ textarea:focus-visible {
 }
 
 @keyframes thinking-wave {
-  0%, 100% { opacity: 0.28; transform: scaleX(0.55); }
-  50% { opacity: 0.9; transform: scaleX(1); }
+  0%, 100% { opacity: 0.26; transform: translateY(1px) scale(0.72); }
+  50% { opacity: 0.88; transform: translateY(-1px) scale(1); }
 }
 
-@keyframes thinking-card-breathe {
-  0%, 100% { transform: translateY(0); box-shadow: var(--liquid-shadow-soft), inset 0 1px var(--liquid-highlight); }
-  50% { transform: translateY(-2px); box-shadow: var(--liquid-shadow), inset 0 1px var(--liquid-highlight); }
+@keyframes glass-card-arrive {
+  from { opacity: 0; transform: translateY(5px) scale(0.992); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes reply-reveal {
-  from { opacity: 0; transform: translateY(8px); filter: blur(3px); }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+  from { opacity: 0; transform: translateY(5px) scale(0.997); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-@keyframes image-card-float {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-3px) scale(1.004); }
+@keyframes reply-glass-wash {
+  0% { opacity: 0; transform: translateX(-10px) scale(0.985); }
+  35% { opacity: 0.72; }
+  100% { opacity: 0; transform: translateX(14px) scale(1.01); }
 }
 
-@keyframes image-orb-float {
-  0%, 100% { transform: translateY(1px) rotate(-2deg); }
-  50% { transform: translateY(-3px) rotate(2deg); }
+@keyframes glass-lens-breathe {
+  0%, 100% { transform: scale(0.96); box-shadow: inset 0 1px var(--liquid-highlight), 0 7px 20px rgba(0, 0, 0, 0.08); }
+  50% { transform: scale(1.025); box-shadow: inset 0 1px rgba(255, 255, 255, 0.46), 0 10px 26px rgba(0, 0, 0, 0.12); }
 }
 
 @keyframes image-scan {
@@ -2070,6 +2094,14 @@ textarea:focus-visible {
   .message-row--assistant.message-row--fresh .message-copy > *,
   .message-row--assistant.message-row--fresh .media-grid,
   .message-row--assistant.message-row--fresh .file-grid {
+    animation: none !important;
+  }
+
+  .thinking-card::after,
+  .thinking-visual,
+  .image-progress-card::before,
+  .image-progress-orb,
+  .message-row--assistant.message-row--fresh > .message-body::before {
     animation: none !important;
   }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## VELA 2.4.2 — resilient chat and liquid motion - 2026-08-25
+
+- Recover stale local conversation identifiers automatically instead of returning a chat 500 error.
+- Surface genuine network and image-generation failures and always clear pending UI state.
+- Add a 15-minute hard client timeout to prevent image requests from loading forever.
+- Remove a blocking Windows BITS pause from the image request path so installed builds start inference immediately.
+- Skip expensive identity review for generic product, landscape, and concept images so completed outputs return immediately.
+- Cap optional local prompt translation at 15 seconds and fall back safely when the chat model is cold.
+- Replace blurred, bouncing reply motion with a restrained liquid-glass reveal.
+- Keep thinking and image progress alive with localized lens motion instead of moving whole cards.
+- Verify native generation, cancellation cleanup, post-cancel generation, and persisted D-drive output.
+
 ## VELA 2.4.1 — stable conversations and image fallback - 2026-08-25
 
 - Update thinking text and image progress in place instead of rebuilding the complete conversation.
