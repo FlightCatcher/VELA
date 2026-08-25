@@ -51,12 +51,13 @@ import {
   publicPluginCatalog,
   uninstallPlugin
 } from "./plugin-center.mjs";
+import { runWithDeadline } from "./async-deadline.mjs";
 
 const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.5.0-beta.4";
+const VELA_RELEASE = "2.5.0-beta.5";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -517,13 +518,13 @@ async function prepareImagePrompt(prompt, spec = null) {
   }
   const model = await availableOllamaPromptModel();
   if (!model) return cleaned;
-  try {
+  return runWithDeadline(async (signal) => {
     const response = await fetch("http://127.0.0.1:11434/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // Prompt translation is an optimization, never a reason to hold the UI.
       // Fall back to the original prompt quickly when the local chat model is cold.
-      signal: AbortSignal.timeout(15000),
+      signal,
       body: JSON.stringify({
         model,
         keep_alive: 0,
@@ -553,9 +554,7 @@ async function prepareImagePrompt(prompt, spec = null) {
     translated = translated.replace(/[*#`]/g, "").replace(/\s+/g, " ").trim();
     const words = translated.split(" ").filter(Boolean);
     return translated && words.length <= 36 ? translated : cleaned;
-  } catch {
-    return cleaned;
-  }
+  }, 6000, cleaned);
 }
 
 async function inspectReferenceImage(localPath, prompt) {

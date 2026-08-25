@@ -57,6 +57,14 @@ test("routes generic city concept art to SSD1B", () => {
   assert.match(spec.palette, /monochrome/);
 });
 
+test("design adjectives in an icon request are not mistaken for a character identity", () => {
+  const spec = analyzeImageRequest("生成一张极简黑白圆形 VELA 科技图标，纯色背景", { engine: "auto" });
+  assert.equal(spec.subjectType, "product");
+  assert.equal(spec.identityLabel, "");
+  assert.equal(spec.needsReference, false);
+  assert.equal(spec.engine, "ssd1b");
+});
+
 test("known identities require identity reference search", () => {
   const spec = analyzeImageRequest("生成《有兽焉》辟邪的图片", { engine: "auto" });
   assert.equal(spec.referenceMode, "identity-search");

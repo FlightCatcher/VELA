@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — permission and plugin center
+## Unreleased
+
+## VELA 2.5.0-beta.5 — permission, plugins and reliable image start - 2026-08-25
 
 - Add Safe, Standard, and Full Access permission profiles that are enforced by the Agent runtime.
 - Require an explicit risk acknowledgement before Full Access can be enabled, with one-click safe-mode revocation.
@@ -8,6 +10,10 @@
 - Add a persistent plugin catalog with native, OAuth, configuration, and MCP connector entry points.
 - Declare each plugin's requested permissions and never treat account connectors as authorized before login.
 - Add desktop permission and plugin management surfaces plus regression coverage.
+- Prevent local prompt translation from holding image generation indefinitely when an Ollama model is cold or unresponsive.
+- Fall back to the original prompt after a hard six-second preparation deadline.
+- Stop treating icon and interface design adjectives as unknown character identities requiring reference search.
+- Verify the repaired native image path with a real 2560×1440 generation and output persistence.
 
 ## VELA 2.5.0-beta.4 — first public beta candidate - 2026-08-25
 
