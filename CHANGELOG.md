@@ -1,6 +1,6 @@
 # Changelog
 
-## VELA 2.5.0-beta.2 — first public beta candidate - 2026-08-25
+## VELA 2.5.0-beta.3 — first public beta candidate - 2026-08-25
 
 - Add first-launch hardware, memory, accelerator, network and model-drive detection with tiered recommendations.
 - Add explicit offline, low-memory, no-accelerator and low-disk guidance.

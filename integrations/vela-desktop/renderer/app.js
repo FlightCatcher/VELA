@@ -4,7 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
-import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.5.0-beta.2";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.5.0-beta.3";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.5.0-beta.2 · 就绪",
-    healthDegraded: "VELA 2.5.0-beta.2 · 部分服务离线",
+    healthReady: "VELA 2.5.0-beta.3 · 就绪",
+    healthDegraded: "VELA 2.5.0-beta.3 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.5.0-beta.2 · Ready",
-    healthDegraded: "VELA 2.5.0-beta.2 · Degraded",
+    healthReady: "VELA 2.5.0-beta.3 · Ready",
+    healthDegraded: "VELA 2.5.0-beta.3 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
