@@ -1,5 +1,13 @@
 # Changelog
 
+## VELA 2.4.0 — unified full-capability model center - 2026-08-25
+
+- Expanded the local model catalog across general chat, agents, reasoning, coding, vision and embeddings.
+- Added one-click installation and automatic activation for supported Ollama models.
+- Added verified API onboarding for MiniMax M2.7, Gemini, Mistral, OpenRouter, DeepSeek and OpenAI-compatible services.
+- Added configured-provider switching and capability filters in Model Center.
+- Removed remaining public UI assumptions about fixed D:/E: model-library paths.
+
 ## VELA 2.3.2 — deterministic release packaging - 2026-08-24
 
 - Disable Electron Builder's implicit tag publishing in CI.

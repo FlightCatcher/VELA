@@ -92,6 +92,7 @@
 .provider-form input, .provider-form select { min-width: 0; padding: 13px 14px; border-radius: 14px; border: 1px solid var(--apple-line); color: var(--apple-ink); background: rgba(255,255,255,.66); outline: none; transition: border .2s, box-shadow .2s; }
 .provider-form input:focus, .provider-form select:focus { border-color: var(--apple-line-strong); box-shadow: 0 0 0 4px rgba(0,0,0,.045); }
 .model-section-title { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.model-section-title select { flex: none; min-width: 118px; border: 1px solid var(--apple-line); border-radius: 999px; padding: 8px 30px 8px 13px; color: var(--apple-ink); background: rgba(255,255,255,.62); outline: none; cursor: pointer; }
 .model-section-title--spaced { margin-top: 25px; }
 .model-section-title h3 { margin-bottom: 4px !important; }
 .model-section-title p { margin: 0; max-width: 610px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
@@ -112,6 +113,7 @@
 :root[data-theme="dark"] .model-card,
 :root[data-theme="dark"] .provider-form input,
 :root[data-theme="dark"] .provider-form select { background: rgba(255,255,255,.055); }
+:root[data-theme="dark"] .model-section-title select { color: var(--apple-ink); background: rgba(255,255,255,.08); }
 :root[data-theme="dark"] .model-card:hover { background: rgba(255,255,255,.085); }
 :root[data-theme="dark"] .model-center__tabs { background: rgba(255,255,255,.065); }
 :root[data-theme="dark"] .model-center__storage { background: rgba(255,255,255,.05); }

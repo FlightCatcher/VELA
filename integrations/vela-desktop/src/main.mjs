@@ -23,6 +23,7 @@ import {
   loadModelCenterConfig,
   modelRuntimeEnvironment,
   publicModelCenterConfig,
+  RECOMMENDED_LOCAL_MODELS,
   saveModelCenterConfig
 } from "./model-center.mjs";
 import {
@@ -38,7 +39,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.3.2";
+const VELA_RELEASE = "2.4.0";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -1734,6 +1735,30 @@ async function independentModelCatalog() {
   };
 }
 
+async function testProviderConnection(provider, apiKey) {
+  const baseUrl = String(provider?.baseUrl || "").trim().replace(/\/$/, "");
+  const model = String(provider?.model || "").trim();
+  if (!/^https:\/\//i.test(baseUrl)) throw new Error("API 地址必须使用 HTTPS。");
+  if (!model) throw new Error("模型名称不能为空。");
+  if (!apiKey) throw new Error("请输入 API Key 后再验证。");
+  const response = await fetch(`${baseUrl}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 240).replace(/\s+/g, " ");
+    throw new Error(`模型服务验证失败 (${response.status})${detail ? `：${detail}` : ""}`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  const available = Array.isArray(payload?.data)
+    ? payload.data.map((item) => String(item?.id || item?.name || "")).filter(Boolean)
+    : Array.isArray(payload?.models)
+      ? payload.models.map((item) => String(item?.name || item?.id || "").replace(/^models\//, "")).filter(Boolean)
+      : [];
+  const exact = available.includes(model) || available.includes(`models/${model}`);
+  return { ok: true, model, exact, availableCount: available.length };
+}
+
 async function installNativeImageRuntime() {
   const key = "runtime/image";
   if (modelDownloads.get(key)?.state === "downloading") return;
@@ -1887,7 +1912,7 @@ async function installDirectModel(model) {
   const entry = catalog[model];
   if (!entry) throw new Error("Unknown direct model.");
   if (modelDownloads.get(model)?.state === "downloading") return;
-  const destination = path.join("E:\\AI-Models\\GGUF", entry.fileName);
+  const destination = path.join(storagePaths().modelsRoot, "GGUF", entry.fileName);
   modelDownloads.set(model, { model, state: "downloading", completed: 0, total: 0 });
   try {
     await downloadFile(entry.url, destination, model);
@@ -1931,6 +1956,13 @@ async function installOllamaModel(model) {
       }
     }
     modelDownloads.set(model, { ...modelDownloads.get(model), model, state: "completed" });
+    const catalogEntry = RECOMMENDED_LOCAL_MODELS.find((item) => item.id === model);
+    if (catalogEntry?.category !== "embedding") {
+      const config = readModelCenterConfig();
+      config.primary = `ollama/${model}`;
+      saveModelCenterConfig(modelCenterConfigPath(), config);
+      void restartOcuApi();
+    }
   } catch (error) {
     modelDownloads.set(model, {
       model,
@@ -1943,15 +1975,16 @@ async function installOllamaModel(model) {
 function resourceSnapshot() {
   const totalBytes = os.totalmem();
   const freeBytes = os.freemem();
+  const storage = storagePaths();
   const snapshot = {
     memoryTotalGb: Number((totalBytes / 1024 ** 3).toFixed(1)),
     memoryFreeGb: Number((freeBytes / 1024 ** 3).toFixed(1)),
     memoryPressure: freeBytes / totalBytes < 0.15,
-    modelLibrary: "E:\\AI-Models",
+    modelLibrary: storage.modelsRoot,
     modelLibraryFreeGb: null
   };
   try {
-    const stats = fs.statfsSync("E:\\AI-Models");
+    const stats = fs.statfsSync(storage.modelsRoot);
     snapshot.modelLibraryFreeGb = Number(((Number(stats.bavail) * Number(stats.bsize)) / 1024 ** 3).toFixed(1));
   } catch {
     // Disk free space is optional on older Electron runtimes.
@@ -1960,6 +1993,7 @@ function resourceSnapshot() {
 }
 
 function createServer() {
+  const storage = storagePaths();
   const allowedMediaExtensions = new Set([
     ".bmp", ".gif", ".jpeg", ".jpg", ".mp3", ".mp4", ".pdf", ".png", ".wav", ".webm", ".webp"
   ]);
@@ -1967,8 +2001,10 @@ function createServer() {
     app.getPath("userData"),
     path.join(VELA_PROJECT_ROOT, ".vela"),
     path.join(VELA_PROJECT_ROOT, ".openclaw"),
-    "C:\\AI-Apps",
-    "E:\\AI-Models\\Image-Generation"
+    storage.dataRoot,
+    storage.modelsRoot,
+    storage.outputRoot,
+    storage.imageEngineRoot
   ].filter((candidate) => fs.existsSync(candidate));
 
   return http.createServer(async (req, res) => {
@@ -2098,6 +2134,10 @@ function createServer() {
         }
         const payload = JSON.parse(await readRequestBody(req));
         const model = String(payload?.model || "").trim();
+        if (!RECOMMENDED_LOCAL_MODELS.some((item) => item.id === model)) {
+          sendJson(res, 400, { error: "Unknown model catalog entry." });
+          return;
+        }
         void installOllamaModel(model);
         sendJson(res, 202, { ok: true, model, state: "downloading" });
         return;
@@ -2172,7 +2212,24 @@ function createServer() {
           return;
         }
         void installDirectModel(model);
-        sendJson(res, 202, { ok: true, model, state: "downloading", target: "E:\\AI-Models\\GGUF" });
+        sendJson(res, 202, { ok: true, model, state: "downloading", target: path.join(storagePaths().modelsRoot, "GGUF") });
+        return;
+      }
+
+      if (url.pathname === "/api/providers/test" && req.method === "POST") {
+        if (!requestIsAuthorized(req, url)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        try {
+          const payload = JSON.parse(await readRequestBody(req));
+          const config = readModelCenterConfig();
+          const encrypted = config.providers.find((item) => item.id === payload.id)?.encryptedApiKey || "";
+          const apiKey = String(payload.apiKey || (encrypted ? decryptApiKey(encrypted) : ""));
+          sendJson(res, 200, await testProviderConnection(payload, apiKey));
+        } catch (error) {
+          sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
         return;
       }
 
@@ -2193,9 +2250,15 @@ function createServer() {
             : config.providers.find((item) => item.id === payload.id)?.encryptedApiKey || "",
           enabled: payload.enabled !== false
         };
+        if (!/^[a-z0-9_-]+$/i.test(provider.id) || !/^https:\/\//i.test(provider.baseUrl) || !provider.model) {
+          sendJson(res, 400, { error: "Invalid provider configuration." });
+          return;
+        }
         config.providers = [...config.providers.filter((item) => item.id !== provider.id), provider];
+        if (payload.activate !== false) config.primary = `${provider.id}/${provider.model}`;
         const saved = saveModelCenterConfig(modelCenterConfigPath(), config);
         sendJson(res, 200, publicModelCenterConfig(saved));
+        void restartOcuApi();
         return;
       }
 

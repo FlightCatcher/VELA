@@ -41,14 +41,18 @@ Windows 用户数据目录，不写入 Git 仓库。
 桌面端顶部打开“模型中心”：
 
 - 一键安装 `qwen3:4b`、`qwen3:8b`、`qwen3-vl:4b`、`qwen3-embedding:0.6b`
+- 按通用、Agent、推理、编程、视觉和知识库分类选择本地模型
+- 一键下载 Qwen、DeepSeek R1、Gemma、Phi、Llama 和 Embedding 模型，完成后自动接入
 - 选择已安装的 Ollama 模型并立即切换
+- 使用直连 GGUF 引擎绕过 Ollama，并保持一次只加载一个模型
+- 接入并验证 DeepSeek、MiniMax M2.7、Gemini、Mistral、OpenRouter、OpenAI 或其他 OpenAI-compatible API
 - 添加 DeepSeek、OpenAI Compatible 或其他兼容 API
 - API Key 不写入项目文件，使用系统安全存储加密
 - 自动识别生图模型，并把缺失资源安装到用户选择的数据盘
 - 下载支持进度、断点续传、取消、磁盘空间检查和已发布哈希校验
 - 模型、缓存、输出和运行时目录可在界面中更改
 
-VELA 默认推荐 `qwen3:8b` 作为综合 Agent 模型；低内存环境可使用 `qwen3:4b`。
+VELA 默认推荐 `qwen3:8b` 作为综合 Agent 模型；低内存环境可使用 `qwen3.5:4b`。MiniMax 当前按官方 M2.7 API 接入，避免在普通个人电脑上下载无法实际运行的超大权重。
 
 ## 开发
 

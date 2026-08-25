@@ -15,8 +15,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.3 · 就绪",
-    healthDegraded: "VELA 2.3 · 部分服务离线",
+    healthReady: "VELA 2.4 · 就绪",
+    healthDegraded: "VELA 2.4 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -146,8 +146,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.3 · Ready",
-    healthDegraded: "VELA 2.3 · Degraded",
+    healthReady: "VELA 2.4 · Ready",
+    healthDegraded: "VELA 2.4 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -306,6 +306,7 @@ const els = {
   directModels: document.querySelector("#direct-models"),
   imageModels: document.querySelector("#image-models"),
   modelCenterSummary: document.querySelector("#model-center-summary"),
+  modelCategoryFilter: document.querySelector("#model-category-filter"),
   modelStoragePath: document.querySelector("#model-storage-path"),
   modelStorageSelect: document.querySelector("#model-storage-select"),
   appUpdateButton: document.querySelector("#app-update-button"),
@@ -317,6 +318,7 @@ const els = {
   providerBaseUrl: document.querySelector("#provider-base-url"),
   providerModel: document.querySelector("#provider-model"),
   providerApiKey: document.querySelector("#provider-api-key"),
+  providerList: document.querySelector("#provider-list"),
   commandDeck: document.querySelector("#command-deck"),
   workspaceToggle: document.querySelector("#workspace-toggle"),
   deckStatus: document.querySelector("#deck-status"),
@@ -384,6 +386,7 @@ const state = {
   health: { loading: true, ok: false, services: {}, resources: null },
   imageSettings: loadImageSettings(),
   models: { primary: "", items: [] },
+  modelCategory: "all",
   language: (localStorage.getItem("vela.desktop.language") ?? localStorage.getItem("openclaw.desktop.language")) === "en" ? "en" : "zh",
   optimistic: null,
   pending: false,
@@ -1447,10 +1450,24 @@ async function loadModels() {
 function renderModelCenter() {
   if (!els.recommendedModels) return;
   const installed = new Set((state.models.items || []).map((item) => item.id));
-  els.recommendedModels.innerHTML = (state.models.recommended || []).map((item) => {
+  const recommended = (state.models.recommended || []).filter((item) => state.modelCategory === "all" || item.category === state.modelCategory);
+  els.recommendedModels.innerHTML = recommended.map((item) => {
     const isInstalled = installed.has(`ollama/${item.id}`);
-    return `<article class="model-card"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.use)} · ${escapeHtml(item.size)} · ${escapeHtml(item.fit)}</span><button type="button" data-install-model="${escapeHtml(item.id)}" ${isInstalled ? "disabled" : ""}>${isInstalled ? "已安装" : "一键安装"}</button></article>`;
+    const capabilities = (item.capabilities || []).map((capability) => `<em>${escapeHtml(capability)}</em>`).join("");
+    return `<article class="model-card"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.use)} · ${escapeHtml(item.size)} · ${escapeHtml(item.fit)}</span><div class="model-card__tags">${capabilities}</div><button type="button" data-install-model="${escapeHtml(item.id)}" ${isInstalled ? "disabled" : ""}>${isInstalled ? "已安装并接入" : "一键下载安装"}</button></article>`;
   }).join("");
+  if (els.providerTemplate) {
+    const selected = els.providerTemplate.value;
+    els.providerTemplate.innerHTML = (state.models.providerTemplates || []).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("");
+    els.providerTemplate.value = (state.models.providerTemplates || []).some((item) => item.id === selected) ? selected : (state.models.providerTemplates?.[0]?.id || "custom");
+    if (!els.providerLabel.value) applyProviderTemplate();
+  }
+  if (els.providerList) {
+    const providers = state.models.providers || [];
+    els.providerList.innerHTML = providers.length
+      ? providers.map((item) => `<article class="model-card"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.model)} · ${item.hasApiKey ? "密钥已加密保存" : "缺少密钥"}</span><button type="button" data-select-provider="${escapeHtml(`${item.id}/${item.model}`)}">${state.models.primary === `${item.id}/${item.model}` ? "正在使用" : "切换使用"}</button></article>`).join("")
+      : `<div class="workspace-empty">尚未接入云端模型。</div>`;
+  }
   if (els.directRuntimeInstall) {
     els.directRuntimeInstall.textContent = state.models.directRuntime?.installed ? "直连引擎已安装" : "安装直连引擎";
     els.directRuntimeInstall.disabled = Boolean(state.models.directRuntime?.installed);
@@ -1459,7 +1476,7 @@ function renderModelCenter() {
     const direct = (state.models.items || []).filter((item) => item.provider === "direct");
     els.directModels.innerHTML = direct.length
       ? direct.map((item) => `<article class="model-card model-card--direct"><strong>${escapeHtml(item.label)}</strong><span>GGUF · ${escapeHtml(formatBytes(item.sizeBytes))} · ${item.runtimeReady ? "可直接运行" : "需安装直连引擎"}</span><button type="button" data-select-direct="${escapeHtml(item.id)}" ${item.runtimeReady ? "" : "disabled"}>${state.models.primary === item.id ? "正在使用" : "直接运行"}</button></article>`).join("")
-      : `<div class="workspace-empty workspace-empty--action direct-model-empty"><span>还没有 GGUF 模型。可把已有模型放入 E:\\AI-Models，或下载适合本机的 Qwen3 4B Q4（约 2.5 GB）。</span><button type="button" data-download-direct="qwen3-4b-q4">下载到 E 盘</button></div>`;
+      : `<div class="workspace-empty workspace-empty--action direct-model-empty"><span>还没有 GGUF 模型。可把已有模型放入当前模型目录，或下载适合本机的 Qwen3 4B Q4（约 2.5 GB）。</span><button type="button" data-download-direct="qwen3-4b-q4">下载到模型盘</button></div>`;
   }
   const imageModels = Array.isArray(state.models.imageModels) ? state.models.imageModels : [];
   if (els.imageModels) {
@@ -1493,7 +1510,7 @@ async function installImageModel(model) {
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "生图模型安装失败");
-  toast("正在下载到 D 盘模型缓存；完成后会自动嵌入 VELA");
+  toast("正在下载到模型盘；完成后会自动嵌入 VELA");
   window.setTimeout(() => void refreshModelDownloads(), 1000);
 }
 
@@ -1504,7 +1521,7 @@ async function installDirectRuntime() {
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "直连引擎安装失败");
-  toast("正在把 llama.cpp 直连引擎安装到 E 盘");
+  toast("正在把 llama.cpp 直连引擎安装到模型盘");
   window.setTimeout(() => void refreshModelDownloads(), 1000);
 }
 
@@ -1516,7 +1533,7 @@ async function installDirectModel(model) {
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "GGUF 模型下载失败");
-  toast("正在把 GGUF 模型下载到 E 盘；下载期间仍可使用 API 模型");
+  toast("正在把 GGUF 模型下载到模型盘；下载期间仍可使用 API 模型");
   window.setTimeout(() => void refreshModelDownloads(), 1000);
 }
 
@@ -1570,22 +1587,31 @@ async function saveProvider(event) {
   const id = els.providerTemplate.value === "custom"
     ? els.providerLabel.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-")
     : els.providerTemplate.value;
+  const providerPayload = {
+    id,
+    label: els.providerLabel.value,
+    baseUrl: els.providerBaseUrl.value,
+    model: els.providerModel.value,
+    apiKey: els.providerApiKey.value
+  };
+  toast("正在验证模型服务…");
+  const testResponse = await fetch("/api/providers/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
+    body: JSON.stringify(providerPayload)
+  });
+  const testPayload = await testResponse.json();
+  if (!testResponse.ok) throw new Error(testPayload.error || "模型服务验证失败");
   const response = await fetch("/api/providers", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Vela-App-Key": appKey },
-    body: JSON.stringify({
-      id,
-      label: els.providerLabel.value,
-      baseUrl: els.providerBaseUrl.value,
-      model: els.providerModel.value,
-      apiKey: els.providerApiKey.value
-    })
+    body: JSON.stringify({ ...providerPayload, activate: true })
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "API 模型保存失败");
   els.providerApiKey.value = "";
   await loadModels();
-  toast("API 模型已安全保存，可以立即切换使用");
+  toast(`已验证并接入 ${testPayload.model || providerPayload.model}`);
 }
 
 async function switchModel(modelId) {
@@ -2339,8 +2365,16 @@ els.workspacePanel?.addEventListener("click", (event) => {
   }
 });
 els.providerTemplate?.addEventListener("change", applyProviderTemplate);
+els.modelCategoryFilter?.addEventListener("change", () => {
+  state.modelCategory = els.modelCategoryFilter.value || "all";
+  renderModelCenter();
+});
 els.providerForm?.addEventListener("submit", (event) => {
   void saveProvider(event).catch((error) => toast(String(error)));
+});
+els.providerList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-select-provider]");
+  if (button) void switchModel(button.dataset.selectProvider);
 });
 els.workspaceToggle?.addEventListener("click", () => {
   els.commandDeck.classList.toggle("is-collapsed");

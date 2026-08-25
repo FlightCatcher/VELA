@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BUILTIN_PROVIDERS,
   defaultModelCenterConfig,
   modelRuntimeEnvironment,
   normalizeModelCenterConfig,
-  publicModelCenterConfig
+  publicModelCenterConfig,
+  RECOMMENDED_LOCAL_MODELS
 } from "../src/model-center.mjs";
 
 test("default model center uses the local agent model", () => {
@@ -45,4 +47,19 @@ test("runtime environment routes a direct GGUF model without Ollama", () => {
   const environment = modelRuntimeEnvironment(config);
   assert.equal(environment.OCU_OLLAMA_BASE_URL, "http://127.0.0.1:11435");
   assert.equal(environment.OCU_OLLAMA_MODEL, "qwen-direct");
+});
+
+test("public catalog covers the major local capability categories", () => {
+  const categories = new Set(RECOMMENDED_LOCAL_MODELS.map((item) => item.category));
+  assert.deepEqual(categories, new Set(["general", "agent", "reasoning", "coding", "vision", "embedding"]));
+  assert.ok(RECOMMENDED_LOCAL_MODELS.every((item) => item.capabilities.length > 0));
+});
+
+test("built-in cloud catalog includes current MiniMax and Gemini endpoints", () => {
+  const minimax = BUILTIN_PROVIDERS.find((item) => item.id === "minimax");
+  const gemini = BUILTIN_PROVIDERS.find((item) => item.id === "gemini");
+  assert.equal(minimax.model, "MiniMax-M2.7");
+  assert.equal(minimax.baseUrl, "https://api.minimax.io/v1");
+  assert.equal(gemini.model, "gemini-3.7-flash");
+  assert.equal(gemini.baseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
 });

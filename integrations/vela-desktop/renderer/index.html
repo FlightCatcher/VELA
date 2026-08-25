@@ -17,7 +17,7 @@
             <img class="vela-logo" src="/vela-icon.png?v=4.11.1" alt="" />
           </span>
           <span>VELA</span>
-            <small>VELA 2.3 · LOCAL INTELLIGENCE</small>
+            <small>VELA 2.4 · LOCAL INTELLIGENCE</small>
         </div>
       </header>
 
@@ -92,7 +92,7 @@
             <span data-i18n="localAgent">本地智能体</span>
           </div>
           <div class="chat-header__right">
-            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.3 · 检查中</span>
+            <span class="health-badge" id="health-badge" title="本地服务状态">VELA 2.4 · 检查中</span>
             <button class="text-button" id="retry-button" type="button" hidden data-i18n="reconnect">重新连接</button>
             <label class="model-picker">
               <span data-i18n="modelLabel">模型</span>
@@ -347,7 +347,7 @@
         </nav>
         <div class="model-center__viewport">
           <section class="model-center__panel is-active" data-model-panel="chat">
-            <div class="model-section-title"><div><h3>推荐本地模型</h3><p>按你的 8 GB 显存筛选，安装后自动出现在模型切换器。</p></div></div>
+            <div class="model-section-title"><div><h3>本地模型库</h3><p>按能力筛选；下载完成后自动接入 VELA 模型切换器。</p></div><select id="model-category-filter" aria-label="模型类别"><option value="all">全部</option><option value="agent">Agent</option><option value="general">通用</option><option value="reasoning">推理</option><option value="coding">编程</option><option value="vision">视觉</option><option value="embedding">知识库</option></select></div>
             <div class="model-center__grid" id="recommended-models"></div>
             <div class="model-section-title model-section-title--spaced"><div><h3>直连 GGUF</h3><p>VELA 直接运行，不经过 Ollama；同一时间只加载一个模型。</p></div><button id="direct-runtime-install" type="button">安装直连引擎</button></div>
             <div class="model-center__grid" id="direct-models"></div>
@@ -359,13 +359,15 @@
           <section class="model-center__panel" data-model-panel="api">
             <div class="model-section-title"><div><h3>云端模型服务</h3><p>API Key 仅在本机通过 Windows 安全加密保存。</p></div></div>
             <form class="provider-form" id="provider-form">
-              <select id="provider-template"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI Compatible</option><option value="custom">自定义</option></select>
+              <select id="provider-template"></select>
               <input id="provider-label" placeholder="显示名称" required />
               <input id="provider-base-url" placeholder="API Base URL" required />
               <input id="provider-model" placeholder="模型名称" required />
               <input id="provider-api-key" type="password" placeholder="API Key（由 Windows 加密保存）" />
               <button type="submit">保存并接入</button>
             </form>
+            <div class="model-section-title model-section-title--spaced"><div><h3>已接入服务</h3><p>验证成功后会立即出现在顶部模型切换器。</p></div></div>
+            <div class="model-center__grid" id="provider-list"></div>
           </section>
         </div>
       </dialog>

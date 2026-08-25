@@ -2,15 +2,27 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const RECOMMENDED_LOCAL_MODELS = Object.freeze([
-  { id: "qwen3:4b", label: "Qwen3 4B", size: "2.5 GB", use: "轻量聊天", fit: "推荐" },
-  { id: "qwen3:8b", label: "Qwen3 8B", size: "5.2 GB", use: "综合 Agent", fit: "最佳" },
-  { id: "qwen3-vl:4b", label: "Qwen3-VL 4B", size: "3.3 GB", use: "图片理解", fit: "推荐" },
-  { id: "qwen3-embedding:0.6b", label: "Qwen3 Embedding", size: "约 0.6 GB", use: "记忆与知识库", fit: "推荐" }
+  { id: "qwen3.5:4b", label: "Qwen 3.5 4B", size: "3.4 GB", use: "中文、视觉与工具", fit: "推荐", category: "general", capabilities: ["对话", "看图", "工具"] },
+  { id: "qwen3.5:9b", label: "Qwen 3.5 9B", size: "6.6 GB", use: "高质量综合 Agent", fit: "8 GB 显存上限", category: "agent", capabilities: ["推理", "看图", "工具"] },
+  { id: "qwen3:8b", label: "Qwen3 8B", size: "5.2 GB", use: "稳定中文 Agent", fit: "最佳", category: "agent", capabilities: ["对话", "推理", "工具"] },
+  { id: "deepseek-r1:8b", label: "DeepSeek R1 8B", size: "约 5.2 GB", use: "数学与复杂推理", fit: "推荐", category: "reasoning", capabilities: ["推理", "数学"] },
+  { id: "qwen2.5-coder:7b", label: "Qwen 2.5 Coder 7B", size: "4.7 GB", use: "代码生成、修复与解释", fit: "推荐", category: "coding", capabilities: ["编程", "修复"] },
+  { id: "gemma3:4b", label: "Gemma 3 4B", size: "3.3 GB", use: "多语言与图片理解", fit: "轻量", category: "vision", capabilities: ["看图", "多语言"] },
+  { id: "phi4-mini:3.8b", label: "Phi-4 Mini", size: "2.5 GB", use: "数学、逻辑与函数调用", fit: "轻量", category: "reasoning", capabilities: ["推理", "数学", "工具"] },
+  { id: "llama3.2:3b", label: "Llama 3.2 3B", size: "2.0 GB", use: "摘要、改写与轻量工具", fit: "极速", category: "general", capabilities: ["摘要", "改写", "工具"] },
+  { id: "qwen3-embedding:0.6b", label: "Qwen3 Embedding", size: "约 0.6 GB", use: "中文记忆与知识库", fit: "推荐", category: "embedding", capabilities: ["向量", "RAG"] },
+  { id: "nomic-embed-text", label: "Nomic Embed Text", size: "约 0.3 GB", use: "英文语义检索", fit: "轻量", category: "embedding", capabilities: ["向量", "RAG"] }
 ]);
 
 export const BUILTIN_PROVIDERS = Object.freeze([
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
-  { id: "openai", label: "OpenAI Compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
+  { id: "minimax", label: "MiniMax M2.7", baseUrl: "https://api.minimax.io/v1", model: "MiniMax-M2.7" },
+  { id: "minimax-fast", label: "MiniMax M2.7 Highspeed", baseUrl: "https://api.minimax.io/v1", model: "MiniMax-M2.7-highspeed" },
+  { id: "gemini", label: "Gemini 3.7 Flash", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.7-flash" },
+  { id: "gemini-pro", label: "Gemini 3.1 Pro", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.1-pro-preview" },
+  { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
+  { id: "openrouter", label: "OpenRouter · 自动路由", baseUrl: "https://openrouter.ai/api/v1", model: "~openai/gpt-latest" },
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini" },
   { id: "custom", label: "自定义 OpenAI Compatible", baseUrl: "", model: "" }
 ]);
 
