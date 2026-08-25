@@ -4,6 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
+import { clampImageProgress, messageListRenderKey } from "./message-render-state.js";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -15,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.4 · 就绪",
-    healthDegraded: "VELA 2.4 · 部分服务离线",
+    healthReady: "VELA 2.4.1 · 就绪",
+    healthDegraded: "VELA 2.4.1 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -146,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.4 · Ready",
-    healthDegraded: "VELA 2.4 · Degraded",
+    healthReady: "VELA 2.4.1 · Ready",
+    healthDegraded: "VELA 2.4.1 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -900,10 +901,10 @@ function renderMessage(message) {
 
 function renderThinking() {
   if (state.activeImageRun) {
-    const value = Math.max(1, Math.min(99, Math.round(state.imageProgress.value || 1)));
+    const value = clampImageProgress(state.imageProgress.value);
     const stage = state.imageProgress.stage || t("progressPreparing");
     return `
-      <article class="message-row message-row--assistant">
+      <article class="message-row message-row--assistant" data-pending-kind="image">
         <div class="message-avatar">${createBrandSvg()}</div>
         <div class="message-body image-progress-card">
           <div class="image-progress-visual" aria-hidden="true">
@@ -926,7 +927,7 @@ function renderThinking() {
       </article>`;
   }
   return `
-    <article class="message-row message-row--assistant">
+      <article class="message-row message-row--assistant" data-pending-kind="chat">
       <div class="message-avatar">${createBrandSvg()}</div>
       <div class="message-body thinking-card">
         <div class="thinking-visual" aria-hidden="true">
@@ -948,11 +949,10 @@ function renderThinking() {
 }
 
 function messagesRenderKey(messages) {
-  return JSON.stringify({
+  return messageListRenderKey({
     language: state.language,
     pending: state.pending,
-    thinkingPhase: state.thinkingPhase,
-    imageProgress: state.activeImageRun ? state.imageProgress : null,
+    activeImageRun: state.activeImageRun,
     sessionKey: currentSessionKey,
     messages: messages.map((message) => {
       const parts = extractMessageParts(message);
@@ -967,11 +967,36 @@ function messagesRenderKey(messages) {
   });
 }
 
+function updatePendingPresentation() {
+  const pending = els.chatContent.querySelector("[data-pending-kind]");
+  if (!pending) return;
+  if (pending.dataset.pendingKind === "image") {
+    const value = clampImageProgress(state.imageProgress.value);
+    const stage = state.imageProgress.stage || t("progressPreparing");
+    const detail = state.imageProgress.detail || t("progressEstimate");
+    const title = pending.querySelector(".image-progress-card__header strong");
+    const percent = pending.querySelector(".image-progress-card__header span");
+    const track = pending.querySelector(".image-progress-track");
+    const fill = track?.querySelector("span");
+    const detailNode = pending.querySelector(".image-progress-card__detail");
+    if (title) title.textContent = stage;
+    if (percent) percent.textContent = `${value}%`;
+    if (track) track.setAttribute("aria-valuenow", String(value));
+    if (fill) fill.style.width = `${value}%`;
+    if (detailNode) detailNode.textContent = detail;
+    return;
+  }
+  const phases = [t("thinkingUnderstand"), t("thinkingPlan"), t("thinkingExecute"), t("thinkingVerify")];
+  const title = pending.querySelector(".thinking-copy strong");
+  if (title) title.textContent = phases[state.thinkingPhase % phases.length] || t("thinking");
+}
+
 function renderMessages(forceScroll = false) {
   const messages = visibleMessages();
   const previousMessageCount = els.chatContent.querySelectorAll(".message-row").length;
   const renderKey = messagesRenderKey(messages);
   if (renderKey === state.renderedMessagesKey) {
+    updatePendingPresentation();
     if (forceScroll) {
       requestAnimationFrame(() => {
         els.chatScroll.scrollTop = messages.length === 0 ? 0 : els.chatScroll.scrollHeight;
@@ -988,6 +1013,7 @@ function renderMessages(forceScroll = false) {
     messages.length === 0
       ? renderEmptyState()
       : messages.map(renderMessage).join("") + (state.pending ? renderThinking() : "");
+  updatePendingPresentation();
 
   const renderedRows = Array.from(els.chatContent.querySelectorAll(".message-row"));
   renderedRows.slice(Math.max(0, previousMessageCount)).forEach((row, index) => {
@@ -1080,6 +1106,7 @@ function renderConnection() {
   els.connectionPill.classList.toggle("is-error", !state.connected && Boolean(state.bootstrap));
   els.connectionLabel.textContent = state.connected ? t("connected") : state.bootstrap ? t("disconnected") : t("connecting");
   els.retryButton.hidden = state.connected;
+  renderCommandDeck();
 }
 
 function renderHealthBadge() {
@@ -2061,6 +2088,7 @@ function imagePhasePresentation(status, elapsedSeconds) {
     "reference-validation": [24, zh ? "验证参考图片" : "Validating references", zh ? "识别并排除错人、拼图和低质量缩略图" : "Rejecting mismatches, collages and poor thumbnails"],
     "reference-vision": [30, zh ? "识别稳定特征" : "Inspecting stable traits", zh ? "提取轮廓、配色、标记、材质和地标结构" : "Reading silhouette, palette, markings and landmark structure"],
     "prompt-compilation": [36, zh ? "编译镜头语言" : "Compiling camera language", zh ? "组合构图、机位、光线、尺度和禁止项" : "Combining composition, camera, light, scale and exclusions"],
+    "starting-compatible-engine": [40, zh ? "启动兼容生图引擎" : "Starting compatible image engine", zh ? "独立引擎未就绪，正在自动切换本机可用后端" : "The native engine is unavailable; switching to an installed local backend"],
     "loading-model": [42, zh ? "加载专用模型" : "Loading the specialist model", zh ? `已选择：${engine}` : `Selected: ${engine}`],
     generating: [Math.min(88, 48 + elapsedSeconds * 0.45), zh ? "本地生成中" : "Generating locally", zh ? "正在执行扩散采样与细节合成" : "Running diffusion sampling and detail synthesis"],
     "finalizing-output": [96, zh ? "整理最终图片" : "Finalizing output", zh ? "保存结果与画面规格" : "Saving the result and visual specification"]
@@ -2148,19 +2176,28 @@ async function connectVela() {
       if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
       return response.json();
     });
-    const remoteSessions = await fetch("/api/sessions", {
-      headers: { "X-Vela-App-Key": appKey },
-      cache: "no-store"
-    }).then((response) => response.json());
-    state.sessions = Array.isArray(remoteSessions.sessions)
-      ? remoteSessions.sessions.map((item) => ({
-          key: item.id,
-          title: item.title,
-          updatedAt: Date.parse(item.updated_at) || Date.now()
-        }))
-      : [];
     state.client = { mode: "vela-independent" };
     state.connected = true;
+    let remoteSessions = null;
+    try {
+      remoteSessions = await fetch("/api/sessions", {
+        headers: { "X-Vela-App-Key": appKey },
+        cache: "no-store"
+      }).then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error || `Session list failed (${response.status})`);
+        return apiData(payload);
+      });
+    } catch (error) {
+      console.warn("Session list refresh failed", error);
+    }
+    if (Array.isArray(remoteSessions?.sessions)) {
+      state.sessions = remoteSessions.sessions.map((item) => ({
+        key: item.id,
+        title: item.title,
+        updatedAt: Date.parse(item.updated_at) || Date.now()
+      }));
+    }
     if (!state.sessions.length) await newSession();
     else if (!state.sessions.some((item) => item.key === currentSessionKey)) {
       currentSessionKey = state.sessions[0].key;

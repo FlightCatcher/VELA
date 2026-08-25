@@ -39,7 +39,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.4.0";
+const VELA_RELEASE = "2.4.1";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -82,11 +82,16 @@ function storagePaths() {
   ensureStorageDirectories(storage);
   const legacyImageRoot = "E:\\AI-Models\\Image-Generation";
   const directLegacy = "E:\\AI-Models\\Runtimes\\llama.cpp";
+  const currentImageEngineRoot = path.join(storage.dataRoot, "ImageEngine");
+  const installedImageEngineRoot = path.join(storage.dataRoot, "VELA-ImageEngine");
+  const imageEngineRoot = fs.existsSync(path.join(installedImageEngineRoot, "runtime", "python.exe"))
+    ? installedImageEngineRoot
+    : currentImageEngineRoot;
   return {
     ...storage,
-    imageEngineRoot: path.join(storage.dataRoot, "ImageEngine"),
-    nativePython: path.join(storage.dataRoot, "ImageEngine", "runtime", "python.exe"),
-    nativePackages: path.join(storage.dataRoot, "ImageEngine", "python_packages"),
+    imageEngineRoot,
+    nativePython: path.join(imageEngineRoot, "runtime", "python.exe"),
+    nativePackages: path.join(imageEngineRoot, "python_packages"),
     comfyOutputRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Outputs") : path.join(storage.outputRoot, "Images"),
     characterMemoryRoot: fs.existsSync(legacyImageRoot) ? path.join(legacyImageRoot, "Character-Memory") : path.join(storage.dataRoot, "Character-Memory"),
     directRuntimeRoot: fs.existsSync(directLegacy) ? directLegacy : path.join(storage.runtimeRoot, "llama.cpp")
@@ -1194,7 +1199,7 @@ async function generateNativeImage(prompt, settings = {}, attachments = []) {
       const splitPanelDetected = payload?.result?.qualityChecks?.splitPanelDetected === true;
       const requiresSemanticReview = nativeAttachments.length > 0 || spec.subjectType === "character";
       const accepted = !splitPanelDetected
-        && (review.available ? Number(review.score) >= minimumScore : !requiresSemanticReview);
+        && (!requiresSemanticReview || !review.available || Number(review.score) >= minimumScore);
       if (accepted) {
         imageJob.phase = "finalizing-output";
         return {
@@ -1237,7 +1242,12 @@ async function generateComfyImage(config, prompt, settings = {}, attachments = [
   const hasMemoryReference = Boolean(findCharacterMemory(prompt));
   const referenceWorkflowPath = engine === "flux2" ? profile.fluxReferenceWorkflowPath : profile.referenceWorkflowPath;
   const useReference = ["anime", "flux2"].includes(engine) && settings?.reference !== "off" && settings?.referenceSearch !== false && Boolean(
-    hasUserReference || hasKnownReference || hasMemoryReference || settings?.referenceSearch || settings?.reference === "strict" || /(有兽焉|角色|人物|陌生角色|同人|ip-adapter|reference|character|角色设定|辟邪|bixie|pixiu|天禄|tianlu)/i.test(prompt)
+    hasUserReference
+      || hasKnownReference
+      || hasMemoryReference
+      || spec?.needsReference
+      || settings?.reference === "strict"
+      || /(有兽焉|角色|人物|陌生角色|同人|ip-adapter|reference|character|角色设定|辟邪|bixie|pixiu|天禄|tianlu)/i.test(prompt)
   );
   let referenceContext;
   let uploadedReferenceName = "";
@@ -1439,6 +1449,31 @@ async function generateVerifiedMultiCharacterImage(config, prompt, settings, att
   };
 }
 
+async function generateWithAvailableImageBackend(prompt, settings, attachments, spec) {
+  if (nativeImageEngineAvailable()) {
+    return generateNativeImage(prompt, settings, attachments);
+  }
+  const bootstrapJob = {
+    promptId: "",
+    phase: "starting-compatible-engine",
+    startedAt: Date.now(),
+    cancelled: false,
+    baseUrl: ""
+  };
+  activeImageJob = bootstrapJob;
+  try {
+    if (await ensureComfyUi()) {
+      if (bootstrapJob.cancelled) throw new Error("Image generation cancelled.");
+      if (activeImageJob === bootstrapJob) activeImageJob = null;
+      return generateComfyImage({}, prompt, settings, attachments, spec);
+    }
+  } finally {
+    if (activeImageJob === bootstrapJob) activeImageJob = null;
+  }
+  void installNativeImageRuntime();
+  throw new Error("VELA 正在自动准备独立生图引擎。请在模型中心查看安装进度，准备完成后重试。");
+}
+
 function gatewayIsAvailable(port) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host: "127.0.0.1", port });
@@ -1454,11 +1489,18 @@ function gatewayIsAvailable(port) {
   });
 }
 
-function startComfyUi() {
+function findComfyUi() {
   const portableRoot = "C:\\AI-Apps\\ComfyUI_windows_portable";
   const pythonPath = path.join(portableRoot, "python_embeded", "python.exe");
   const mainPath = path.join(portableRoot, "ComfyUI", "main.py");
-  if (!fs.existsSync(pythonPath) || !fs.existsSync(mainPath)) return false;
+  if (!fs.existsSync(pythonPath) || !fs.existsSync(mainPath)) return null;
+  return { portableRoot, pythonPath, mainPath };
+}
+
+function startComfyUi() {
+  const installation = findComfyUi();
+  if (!installation) return false;
+  const { pythonPath, mainPath } = installation;
 
   const outputDirectory = storagePaths().comfyOutputRoot;
   fs.mkdirSync(outputDirectory, { recursive: true });
@@ -1561,12 +1603,22 @@ async function releaseNativeImageEngineForReview(imageJob) {
 }
 
 async function ensureComfyUi() {
-  if (await gatewayIsAvailable(COMFY_PORT)) return true;
+  const isReady = async () => {
+    try {
+      const response = await fetch(`http://${APP_HOST}:${COMFY_PORT}/queue`, {
+        signal: AbortSignal.timeout(1500)
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+  if (await isReady()) return true;
   if (comfyStartPromise) return comfyStartPromise;
   comfyStartPromise = (async () => {
     if (!startComfyUi()) return false;
     for (let attempt = 0; attempt < 360; attempt += 1) {
-      if (await gatewayIsAvailable(COMFY_PORT)) return true;
+      if (await isReady()) return true;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return false;
@@ -2034,12 +2086,18 @@ function createServer() {
           gatewayIsAvailable(OCU_PORT)
         ]);
         const nativeImage = nativeImageEngineAvailable();
+        const compatibleImage = Boolean(findComfyUi());
+        const imageReady = nativeImage || compatibleImage;
         sendJson(res, 200, {
-          ok: ocu && nativeImage,
+          ok: ocu && imageReady,
           release: VELA_RELEASE,
           services: {
             agent: { state: ocu ? "online" : "offline", port: OCU_PORT, backend: "vela" },
-            comfy: { state: nativeImage ? "online" : "offline", port: null, backend: "vela-native" },
+            comfy: {
+              state: imageReady ? "online" : "offline",
+              port: nativeImage ? null : COMFY_PORT,
+              backend: nativeImage ? "vela-native" : compatibleImage ? "compatible-local" : "unavailable"
+            },
             ollama: { state: ollama.state, models: ollama.count, port: 11434 },
             ocu: { state: ocu ? "online" : "offline", port: OCU_PORT }
           },
@@ -2290,16 +2348,7 @@ function createServer() {
         const knowledgeDownloadPaused = await setKnowledgeDownloadPaused(true);
         try {
           const spec = analyzeImageRequest(prompt, settings, attachments);
-          const knownCharacterCount = Array.isArray(spec.knownCharacters) ? spec.knownCharacters.length : 0;
-          if (knownCharacterCount > 1) {
-            sendJson(
-              res,
-              200,
-              await generateNativeImage(prompt, settings, attachments)
-            );
-          } else {
-            sendJson(res, 200, await generateNativeImage(prompt, settings, attachments));
-          }
+          sendJson(res, 200, await generateWithAvailableImageBackend(prompt, settings, attachments, spec));
         } finally {
           if (knowledgeDownloadPaused) await setKnowledgeDownloadPaused(false);
         }
@@ -2403,8 +2452,10 @@ function createServer() {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
+        const nativeImage = nativeImageEngineAvailable();
+        const compatibleImage = Boolean(findComfyUi());
         sendJson(res, 200, {
-          online: nativeImageEngineAvailable(),
+          online: nativeImage || compatibleImage,
           running: activeImageJob ? 1 : 0,
           pending: 0,
           runningPromptId: activeImageJob?.promptId ?? "",
@@ -2413,7 +2464,7 @@ function createServer() {
           workflow: activeImageJob?.workflow ?? null,
           compiled: activeImageJob?.compiled ?? null,
           cancellable: Boolean(activeImageJob),
-          backend: "vela-native"
+          backend: nativeImage ? "vela-native" : compatibleImage ? "compatible-local" : "unavailable"
         });
         return;
       }

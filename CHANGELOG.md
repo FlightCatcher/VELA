@@ -1,5 +1,16 @@
 # Changelog
 
+## VELA 2.4.1 — stable conversations and image fallback - 2026-08-25
+
+- Update thinking text and image progress in place instead of rebuilding the complete conversation.
+- Prevent historical messages from replaying entrance animations during refreshes.
+- Normalize user and assistant message spacing and vertical alignment.
+- Reconnect existing external-drive VELA image runtimes and make direct Diffusers inference the default path.
+- Prevent generic image requests from triggering unnecessary character-reference research.
+- Keep semantic review strict for identity-sensitive work without discarding valid generic images.
+- Fall back to the installed ComfyUI backend when the independent image runtime is unavailable.
+- Start preparing the independent image runtime automatically when no local image backend can run.
+
 ## VELA 2.4.0 — unified full-capability model center - 2026-08-25
 
 - Expanded the local model catalog across general chat, agents, reasoning, coding, vision and embeddings.

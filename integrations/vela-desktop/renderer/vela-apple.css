@@ -2028,3 +2028,48 @@ textarea:focus-visible {
   border-radius: 50% !important;
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.07), inset 0 1px var(--apple-highlight) !important;
 }
+
+/* Keep existing messages stable while thinking and image progress update in place. */
+.chat-content {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 22px !important;
+}
+
+.message-row,
+.message-row--user,
+.message-row--assistant {
+  width: 100% !important;
+  margin: 0 !important;
+  animation: none !important;
+}
+
+.message-row.message-row--fresh {
+  animation: apple-message-enter 460ms var(--apple-ease) both !important;
+}
+
+.message-row--user .message-body {
+  padding: 12px 16px !important;
+}
+
+.message-row--assistant {
+  align-items: start !important;
+}
+
+.message-row--assistant > .message-body {
+  padding-top: 4px !important;
+}
+
+.message-row--assistant > .message-body.thinking-card,
+.message-row--assistant > .message-body.image-progress-card {
+  padding-top: 10px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row.message-row--fresh,
+  .message-row--assistant.message-row--fresh .message-copy > *,
+  .message-row--assistant.message-row--fresh .media-grid,
+  .message-row--assistant.message-row--fresh .file-grid {
+    animation: none !important;
+  }
+}
