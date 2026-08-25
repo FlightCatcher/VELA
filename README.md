@@ -39,6 +39,7 @@ scoop install vela
 ```bash
 # macOS (Homebrew)
 brew tap FlightCatcher/vela
+brew trust FlightCatcher/vela
 brew install --cask vela
 ```
 

@@ -22,13 +22,15 @@ winget install --id FlightCatcher.VELA --exact
 
 ```bash
 brew tap FlightCatcher/vela
+brew trust FlightCatcher/vela
 brew install --cask vela
 ```
 
 Upgrade later with `brew upgrade --cask vela`.
 
-The current public beta is not Apple-notarized. macOS may require explicit
-approval under **System Settings → Privacy & Security** on first launch.
+Homebrew requires users to explicitly trust third-party cask taps. The current
+public beta is also not Apple-notarized, so macOS may require approval under
+**System Settings → Privacy & Security** on first launch.
 
 ## Integrity and first-run behavior
 
