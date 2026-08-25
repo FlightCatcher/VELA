@@ -75,6 +75,27 @@ def test_api_rejects_invalid_search_body(
     assert response.payload["ok"] is False
 
 
+def test_runtime_capabilities_report_active_tool_permissions(tmp_path) -> None:
+    application = ApiApplication(
+        Settings(
+            _env_file=None,
+            workspace_root=tmp_path,
+            permission_profile="full_access",
+            web_search_enabled=True,
+            desktop_control_enabled=True,
+        )
+    )
+
+    response = application.dispatch("GET", "/v1/runtime/capabilities")
+
+    assert response.status == 200
+    assert response.payload["data"] == {
+        "permission_profile": "full_access",
+        "web_search": True,
+        "desktop_control": True,
+    }
+
+
 def test_local_api_server_serves_health_over_http(
     tmp_path,
 ) -> None:

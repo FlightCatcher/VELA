@@ -5,6 +5,7 @@ import json
 from openclaw_ultimate.app import build_default_agent
 from openclaw_ultimate.config import Settings
 from openclaw_ultimate.models import OpenAICompatibleModel
+from openclaw_ultimate.tools.desktop import DesktopTools
 
 
 def test_build_default_agent() -> None:
@@ -46,6 +47,43 @@ def test_build_default_agent_can_enable_shell(
     agent = build_default_agent(settings)
 
     assert "run_command" in agent.tools
+
+
+def test_build_default_agent_registers_enabled_web_and_desktop_plugins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeBackend:
+        def list_windows(self):
+            return []
+
+        def activate_window(self, title):
+            return {"title": title}
+
+        def click(self, x, y):
+            return {"x": x, "y": y}
+
+        def type_text(self, text):
+            return {"text": text}
+
+        def press_key(self, key):
+            return {"key": key}
+
+    monkeypatch.setattr(DesktopTools, "windows", classmethod(lambda cls: cls(FakeBackend())))
+    settings = Settings(
+        _env_file=None,
+        workspace_root=tmp_path,
+        web_search_enabled=True,
+        desktop_control_enabled=True,
+    )
+
+    agent = build_default_agent(settings)
+
+    assert "web_search" in agent.tools
+    assert "fetch_web_page" in agent.tools
+    assert "list_desktop_windows" in agent.tools
+    assert "desktop_click" in agent.tools
+    assert "desktop_type_text" in agent.tools
 
 
 def test_build_default_agent_loads_relative_mcp_config_from_workspace(

@@ -57,7 +57,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.5.0-beta.5";
+const VELA_RELEASE = "2.5.0-beta.6";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -3138,8 +3138,55 @@ async function restartOcuApi() {
     processToStop.kill();
     await Promise.race([stopped, new Promise((resolve) => setTimeout(resolve, 3000))]);
   }
+  if (!ocuProcess && await gatewayIsAvailable(OCU_PORT)) {
+    await stopDetachedManagedOcuApi();
+  }
   ocuProcess = null;
   return ensureOcuApi();
+}
+
+function expectedAgentCapabilities() {
+  const permission = loadPermissionConfig(permissionConfigPath());
+  const pluginEnvironment = pluginRuntimeEnvironment(loadPluginConfig(pluginConfigPath()), permission.profile);
+  return {
+    permission_profile: permission.profile,
+    web_search: pluginEnvironment.OCU_WEB_SEARCH_ENABLED === "true",
+    desktop_control: pluginEnvironment.OCU_DESKTOP_CONTROL_ENABLED === "true"
+  };
+}
+
+async function agentCapabilitiesMatch() {
+  try {
+    const actual = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500);
+    const expected = expectedAgentCapabilities();
+    return actual?.permission_profile === expected.permission_profile
+      && actual?.web_search === expected.web_search
+      && actual?.desktop_control === expected.desktop_control;
+  } catch {
+    return false;
+  }
+}
+
+async function stopDetachedManagedOcuApi() {
+  if (process.platform !== "win32") return false;
+  const script = [
+    `$connections = Get-NetTCPConnection -State Listen -LocalPort ${OCU_PORT} -ErrorAction SilentlyContinue`,
+    "foreach ($connection in $connections) {",
+    "  $process = Get-CimInstance Win32_Process -Filter \"ProcessId=$($connection.OwningProcess)\" -ErrorAction SilentlyContinue",
+    `  if ($process.CommandLine -match 'vela(?:\\.exe)?[\"'']?\\s+serve\\s+.*--port\\s+${OCU_PORT}(?:\\s|$)') {`,
+    "    & taskkill.exe /PID $connection.OwningProcess /T /F 2>$null | Out-Null",
+    "  }",
+    "}"
+  ].join("; ");
+  await new Promise((resolve) => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true }, () => resolve());
+  });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!await gatewayIsAvailable(OCU_PORT)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
 }
 
 async function ensureOcuApi() {
@@ -3153,7 +3200,10 @@ async function ensureOcuApi() {
     // The full status route performs deep component checks and may exceed a
     // cold-start timeout even when the API is already listening. Prefer a
     // cheap loopback probe so desktop restarts never spawn duplicate servers.
-    if (await gatewayIsAvailable(OCU_PORT)) return true;
+    if (await gatewayIsAvailable(OCU_PORT)) {
+      if (await agentCapabilitiesMatch()) return true;
+      await stopDetachedManagedOcuApi();
+    }
     try {
       await requestOcuJson("/v1/status", "GET", null, 1200);
       return true;

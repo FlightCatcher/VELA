@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## VELA 2.5.0-beta.6 — working plugins and desktop control - 2026-08-25
+
+- Reconcile the running Agent process with the permission and plugin configuration instead of silently reusing stale capabilities.
+- Make the Web Search plugin available to the model immediately after activation and verify it against live public search results.
+- Add real Windows window discovery, exact-title activation, coordinate click, text input and safe control-key tools for Full Access mode.
+- Terminate detached managed Agent process trees during capability reload so upgrades cannot leave an old server occupying the API port.
+- Add a runtime capability endpoint and regression tests for enabled Web Search and desktop-control tools.
+
 ## VELA 2.5.0-beta.5 — permission, plugins and reliable image start - 2026-08-25
 
 - Add Safe, Standard, and Full Access permission profiles that are enforced by the Agent runtime.

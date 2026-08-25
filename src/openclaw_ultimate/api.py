@@ -132,6 +132,15 @@ class ApiApplication:
                     }
                 )
 
+            if method == "GET" and path == "/v1/runtime/capabilities":
+                return self._ok(
+                    {
+                        "permission_profile": self.settings.permission_profile,
+                        "web_search": self.settings.web_search_enabled,
+                        "desktop_control": self.settings.desktop_control_enabled,
+                    }
+                )
+
             if method == "GET" and path in {
                 "/health",
                 "/v1/status",

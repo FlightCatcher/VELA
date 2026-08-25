@@ -22,6 +22,7 @@ from openclaw_ultimate.integrations import (
 from openclaw_ultimate.models import OpenAICompatibleModel
 from openclaw_ultimate.rag import build_knowledge_base
 from openclaw_ultimate.tools import (
+    DesktopTools,
     SafeCommandRunner,
     WebTools,
     WorkspaceTools,
@@ -82,6 +83,7 @@ def build_default_agent(
         current_settings,
     )
     _register_web_tools(agent, current_settings)
+    _register_desktop_tools(agent, current_settings)
     _register_openclaw_tool(
         agent,
         current_settings,
@@ -367,6 +369,67 @@ def _register_web_tools(agent: Agent, settings: Settings) -> None:
             "additionalProperties": False,
         },
         handler=web.fetch_web_page,
+    )
+
+
+def _register_desktop_tools(agent: Agent, settings: Settings) -> None:
+    if not settings.desktop_control_enabled:
+        return
+    desktop = DesktopTools.windows()
+    agent.tools.add(
+        name="list_desktop_windows",
+        description="列出当前可见的 Windows 窗口。执行任何桌面操作前必须先调用。",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=desktop.list_windows,
+    )
+    agent.tools.add(
+        name="activate_desktop_window",
+        description="按唯一标题激活一个窗口；标题匹配不唯一时会拒绝操作。",
+        parameters={
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+        handler=desktop.activate_window,
+    )
+    agent.tools.add(
+        name="desktop_click",
+        description="在当前桌面的绝对屏幕坐标单击。仅在用户明确要求且目标位置已确认时使用。",
+        parameters={
+            "type": "object",
+            "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "required": ["x", "y"],
+            "additionalProperties": False,
+        },
+        handler=desktop.click,
+    )
+    agent.tools.add(
+        name="desktop_type_text",
+        description="向当前已确认焦点的窗口输入文本；不得用于密码、令牌或其他敏感信息。",
+        parameters={
+            "type": "object",
+            "properties": {"text": {"type": "string", "maxLength": 4000}},
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        handler=desktop.type_text,
+    )
+    agent.tools.add(
+        name="desktop_press_key",
+        description="按下受支持的单个控制键：enter、escape、tab、backspace、space 或方向键。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "enum": ["enter", "escape", "tab", "backspace", "space", "left", "up", "right", "down"],
+                }
+            },
+            "required": ["key"],
+            "additionalProperties": False,
+        },
+        handler=desktop.press_key,
     )
 
 
