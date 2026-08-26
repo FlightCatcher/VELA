@@ -2467,7 +2467,10 @@ function createServer() {
           return;
         }
         let runtimeCapabilities = null;
-        try { runtimeCapabilities = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500); }
+        try {
+          const response = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500);
+          runtimeCapabilities = response?.data ?? response;
+        }
         catch { runtimeCapabilities = null; }
         sendJson(res, 200, publicPluginCatalog(loadPluginConfig(pluginConfigPath()), runtimeCapabilities));
         return;
@@ -3160,7 +3163,8 @@ function expectedAgentCapabilities() {
 
 async function agentCapabilitiesMatch() {
   try {
-    const actual = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500);
+    const response = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500);
+    const actual = response?.data ?? response;
     const expected = expectedAgentCapabilities();
     return actual?.permission_profile === expected.permission_profile
       && actual?.web_search === expected.web_search
