@@ -69,8 +69,8 @@ def test_build_default_agent_registers_enabled_web_and_desktop_plugins(
         def press_key(self, key):
             return {"key": key}
 
-        def screenshot(self, output_path):
-            return {"path": str(output_path)}
+        def screenshot(self, output_path, window_title=None):
+            return {"path": str(output_path), "window_title": window_title}
 
         def cursor_position(self):
             return {"x": 0, "y": 0}
@@ -103,6 +103,19 @@ def test_build_default_agent_registers_enabled_web_and_desktop_plugins(
     assert "desktop_move_cursor" in agent.tools
     assert "desktop_double_click" in agent.tools
     assert "desktop_scroll" in agent.tools
+
+
+def test_vision_backend_remains_local_when_chat_uses_cloud_api(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        workspace_root=tmp_path,
+        ollama_base_url="https://api.deepseek.com",
+        vision_base_url="http://127.0.0.1:11434",
+        vision_enabled=True,
+    )
+
+    assert settings.ollama_base_url == "https://api.deepseek.com"
+    assert settings.vision_base_url == "http://127.0.0.1:11434"
 
 
 def test_build_default_agent_loads_relative_mcp_config_from_workspace(

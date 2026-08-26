@@ -137,6 +137,25 @@ class AgentRuntime:
                     )
                 )
 
+        # A model can occasionally keep requesting an already-completed tool.
+        # Give it one tool-free turn to summarize the evidence instead of
+        # turning an otherwise useful task into a visible chat failure.
+        messages.append(
+            Message.system(
+                "工具调用预算已用完。不要再调用工具；请根据已有工具结果直接给出简洁、"
+                "诚实的最终答复，并说明任何尚未验证的部分。"
+            )
+        )
+        final_response = await agent.model.complete(messages=tuple(messages), tools=())
+        if not final_response.tool_calls and (final_response.content or "").strip():
+            final_message = Message.assistant(content=final_response.content)
+            messages.append(final_message)
+            self._state = RuntimeState.COMPLETED
+            return RuntimeResult(
+                output=final_response.content or "",
+                messages=tuple(messages),
+                steps=agent.max_steps + 1,
+            )
         raise RuntimeLimitError(
             f"Agent '{agent.name}' exceeded the maximum of {agent.max_steps} steps."
         )

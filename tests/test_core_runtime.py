@@ -146,7 +146,7 @@ def test_runtime_returns_tool_error_to_model() -> None:
     assert result.output == "工具不存在，无法完成操作。"
 
 
-def test_runtime_stops_after_maximum_steps() -> None:
+def test_runtime_summarizes_after_tool_budget_is_exhausted() -> None:
     repeated_call = ModelResponse(
         tool_calls=(
             ToolCall(
@@ -161,6 +161,7 @@ def test_runtime_stops_after_maximum_steps() -> None:
         [
             repeated_call,
             repeated_call,
+            ModelResponse(content="工具预算已结束，echo 返回了 hello。"),
         ]
     )
 
@@ -183,10 +184,30 @@ def test_runtime_stops_after_maximum_steps() -> None:
         handler=lambda text: text,
     )
 
-    with pytest.raises(RuntimeLimitError):
-        asyncio.run(
-            AgentRuntime().run(
-                agent,
-                "不断调用 echo",
-            )
+    result = asyncio.run(
+        AgentRuntime().run(
+            agent,
+            "不断调用 echo",
         )
+    )
+
+    assert result.output == "工具预算已结束，echo 返回了 hello。"
+    assert result.steps == 3
+    assert model.calls[-1][1] == ()
+
+
+def test_runtime_still_fails_when_tool_free_finalization_refuses_to_finish() -> None:
+    repeated_call = ModelResponse(
+        tool_calls=(ToolCall(id="loop-call", name="echo", arguments={"text": "hello"}),)
+    )
+    model = FakeModel([repeated_call, repeated_call])
+    agent = Agent(name="loop-agent", model=model, max_steps=1)
+    agent.tools.add(
+        name="echo",
+        description="原样返回文本。",
+        parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+        handler=lambda text: text,
+    )
+
+    with pytest.raises(RuntimeLimitError):
+        asyncio.run(AgentRuntime().run(agent, "继续调用工具"))

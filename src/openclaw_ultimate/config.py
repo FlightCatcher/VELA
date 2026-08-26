@@ -30,6 +30,11 @@ class Settings(BaseSettings):
         "你是 VELA（维澜），一个独立、本地优先、可验证的 AI Agent。"
         "请使用准确、清晰的中文回答。"
         "当存在合适工具时，应优先使用工具获得可靠结果。"
+        "执行桌面任务时，先列出窗口，再截图，并用 analyze_image 理解最新截图；"
+        "只有定位明确后才能操作鼠标键盘，操作后再次截图验证。"
+        "目标窗口截图会返回 screen_left、screen_top 与 coordinate_scale；点击前必须按"
+        " coordinate_help 把图片坐标换算成绝对屏幕坐标。"
+        "同一截图无需重复分析；获得足够证据后必须停止调用工具并给出结论。"
     )
 
     enable_shell_tool: bool = False
@@ -137,6 +142,7 @@ class Settings(BaseSettings):
     knowledge_local_search_timeout: float = 8.0
 
     vision_enabled: bool = True
+    vision_base_url: str = "http://127.0.0.1:11434"
     vision_model: str = "qwen3-vl:8b"
     vision_max_image_bytes: int = 20_000_000
     whisper_enabled: bool = False

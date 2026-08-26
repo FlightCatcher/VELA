@@ -384,7 +384,13 @@ def _register_desktop_tools(agent: Agent, settings: Settings) -> None:
         ),
         parameters={
             "type": "object",
-            "properties": {"filename": {"type": "string", "default": "current-screen.png"}},
+            "properties": {
+                "filename": {"type": "string", "default": "current-screen.png"},
+                "window_title": {
+                    "type": "string",
+                    "description": "可选：只截取唯一匹配的目标窗口，优先使用精确标题。",
+                },
+            },
             "additionalProperties": False,
         },
         handler=desktop.screenshot,
@@ -995,7 +1001,7 @@ def _register_media_tools(
     if settings.vision_enabled:
         client = OllamaVisionClient(
             workspace=workspace,
-            base_url=settings.ollama_base_url,
+            base_url=settings.vision_base_url,
             model=settings.vision_model,
             timeout=settings.media_timeout,
             max_image_bytes=settings.vision_max_image_bytes,

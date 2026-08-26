@@ -14,7 +14,7 @@ class DesktopBackend(Protocol):
     def click(self, x: int, y: int) -> dict[str, object]: ...
     def type_text(self, text: str) -> dict[str, object]: ...
     def press_key(self, key: str) -> dict[str, object]: ...
-    def screenshot(self, output_path: Path) -> dict[str, object]: ...
+    def screenshot(self, output_path: Path, window_title: str | None = None) -> dict[str, object]: ...
     def cursor_position(self) -> dict[str, object]: ...
     def move_cursor(self, x: int, y: int) -> dict[str, object]: ...
     def double_click(self, x: int, y: int) -> dict[str, object]: ...
@@ -120,19 +120,81 @@ class WindowsDesktopBackend:
         self._user32.mouse_event(0x0800, 0, 0, amount * 120, 0)
         return {"scrolled": True, "amount": amount}
 
-    def screenshot(self, output_path: Path) -> dict[str, object]:
+    def screenshot(
+        self,
+        output_path: Path,
+        window_title: str | None = None,
+    ) -> dict[str, object]:
         try:
             from PIL import ImageGrab
         except ImportError as error:
             raise RuntimeError("Desktop screenshots require the Pillow package.") from error
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        image = ImageGrab.grab(all_screens=True)
+        hwnd: int | None = None
+        if window_title and window_title.strip():
+            query = window_title.strip().casefold()
+            windows = self.list_windows()
+            exact = [item for item in windows if str(item["title"]).casefold() == query]
+            matches = exact or [
+                item for item in windows if query in str(item["title"]).casefold()
+            ]
+            if len(matches) != 1:
+                raise ValueError(f"Expected one matching window, found {len(matches)}.")
+            hwnd = cast(int, matches[0]["handle"])
+        screen_left: int
+        screen_top: int
+        logical_width: int
+        logical_height: int
+        if hwnd is None:
+            image = ImageGrab.grab(all_screens=True)
+            screen_left = int(self._user32.GetSystemMetrics(76))
+            screen_top = int(self._user32.GetSystemMetrics(77))
+            logical_width = max(1, int(self._user32.GetSystemMetrics(78)))
+            logical_height = max(1, int(self._user32.GetSystemMetrics(79)))
+        else:
+            self._user32.ShowWindow(hwnd, 9)
+            self._user32.BringWindowToTop(hwnd)
+            rectangle = wintypes.RECT()
+            if not self._user32.GetWindowRect(hwnd, ctypes.byref(rectangle)):
+                raise RuntimeError("Windows did not return the target window bounds.")
+            desktop = ImageGrab.grab(all_screens=True)
+            virtual_left = int(self._user32.GetSystemMetrics(76))
+            virtual_top = int(self._user32.GetSystemMetrics(77))
+            virtual_width = max(1, int(self._user32.GetSystemMetrics(78)))
+            virtual_height = max(1, int(self._user32.GetSystemMetrics(79)))
+            scale_x = desktop.width / virtual_width
+            scale_y = desktop.height / virtual_height
+            crop_box = (
+                round((int(rectangle.left) - virtual_left) * scale_x),
+                round((int(rectangle.top) - virtual_top) * scale_y),
+                round((int(rectangle.right) - virtual_left) * scale_x),
+                round((int(rectangle.bottom) - virtual_top) * scale_y),
+            )
+            image = desktop.crop(crop_box)
+            screen_left = int(rectangle.left)
+            screen_top = int(rectangle.top)
+            logical_width = max(1, int(rectangle.right) - int(rectangle.left))
+            logical_height = max(1, int(rectangle.bottom) - int(rectangle.top))
+        original_size = (image.width, image.height)
+        if image.width > 2048 or image.height > 2048:
+            image.thumbnail((2048, 2048))
         image.save(output_path, format="PNG")
         return {
             "captured": True,
             "path": str(output_path),
             "width": image.width,
             "height": image.height,
+            "original_width": original_size[0],
+            "original_height": original_size[1],
+            "window_title": window_title,
+            "screen_left": screen_left,
+            "screen_top": screen_top,
+            "coordinate_scale_x": logical_width / image.width,
+            "coordinate_scale_y": logical_height / image.height,
+            "coordinate_help": (
+                "absolute_x = screen_left + image_x * coordinate_scale_x; "
+                "absolute_y = screen_top + image_y * coordinate_scale_y"
+            ),
             "next_step": "Call analyze_image with this path before clicking.",
         }
 
@@ -180,11 +242,20 @@ class DesktopTools:
     def press_key(self, key: str) -> dict[str, object]:
         return self.backend.press_key(key)
 
-    def screenshot(self, filename: str = "current-screen.png") -> dict[str, object]:
+    def screenshot(
+        self,
+        filename: str = "current-screen.png",
+        window_title: str | None = None,
+    ) -> dict[str, object]:
         safe_name = Path(filename).name
         if not safe_name.casefold().endswith(".png"):
             safe_name = f"{safe_name}.png"
-        return self.backend.screenshot((self.screenshot_root / safe_name).resolve())
+        result = self.backend.screenshot(
+            (self.screenshot_root / safe_name).resolve(),
+            window_title,
+        )
+        result["workspace_path"] = (self.screenshot_root / safe_name).as_posix()
+        return result
 
     def cursor_position(self) -> dict[str, object]:
         return self.backend.cursor_position()
