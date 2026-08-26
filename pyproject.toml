@@ -1,7 +1,7 @@
 
 [project]
 name = "vela-agent"
-version = "2.0.0"
+version = "2.5.0-beta.8"
 description = "VELA — verified, local-first AI agent operating system"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

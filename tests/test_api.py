@@ -187,7 +187,7 @@ def test_api_serves_vela_ui_and_meta(tmp_path) -> None:
     assert avatar.status == 200
     assert avatar.content_type == "image/png"
     assert meta.payload["data"]["name"] == "VELA"
-    assert meta.payload["data"]["version"] == "2.0.0"
+    assert meta.payload["data"]["version"] == "2.5.0-beta.8"
 
 
 def test_memory_delete_requires_and_consumes_confirmation(tmp_path) -> None:

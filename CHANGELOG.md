@@ -8,6 +8,9 @@
 - Improved foreground-window activation without changing Windows security settings.
 - Plugin Center now verifies native runtime capabilities and no longer labels placeholders as ready.
 - Added real Win32 smoke coverage plus 159 Python and 95 desktop regression tests.
+- Unified the desktop, packaged Agent, API metadata, and Python package version as 2.5.0-beta.8.
+- Kept local vision routed to Ollama when chat uses a cloud provider such as DeepSeek.
+- Added target-window coordinate metadata and a tool-free final response fallback for exhausted tool loops.
 
 ## VELA 2.5.0-beta.7 — cross-platform release fix - 2026-08-25
 
