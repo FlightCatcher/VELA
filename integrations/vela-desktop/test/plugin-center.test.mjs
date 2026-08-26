@@ -17,9 +17,20 @@ test("native plugin installs in one step", () => {
 
 test("account connector reports authorization instead of claiming success", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "vela-plugins-"));
-  const result = installPlugin(path.join(root, "plugins.json"), "gmail");
-  assert.equal(result.plugins.find((item) => item.id === "gmail").state.status, "needs_authorization");
+  assert.throws(() => installPlugin(path.join(root, "plugins.json"), "gmail"), /尚未交付/);
+  const result = publicPluginCatalog({ plugins: {} });
+  assert.equal(result.plugins.find((item) => item.id === "gmail").state.status, "unavailable");
   assert.ok(publicPluginCatalog({ plugins: {} }).plugins.length >= 16);
+});
+
+test("catalog reports whether a configured native plugin is active in the agent", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vela-plugins-"));
+  const file = path.join(root, "plugins.json");
+  installPlugin(file, "web-search", "standard");
+  const inactive = publicPluginCatalog(loadPluginConfig(file), { web_search: false });
+  assert.equal(inactive.plugins.find((item) => item.id === "web-search").state.status, "restart_required");
+  const active = publicPluginCatalog(loadPluginConfig(file), { web_search: true });
+  assert.equal(active.plugins.find((item) => item.id === "web-search").state.runtimeActive, true);
 });
 
 test("computer control requires full access", () => {

@@ -4,7 +4,7 @@ import { latestMessageByRole } from "./history.js";
 import { messageExecutionRoute } from "./intents.js";
 import { resolveMediaUrl } from "./media.js";
 import { RunCoordinator } from "./run-control.js";
-import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.5.0-beta.7";
+import { clampImageProgress, estimateImageProgress, messageListRenderKey } from "./message-render-state.js?v=2.5.0-beta.8";
 
 const DOMPurify = createDOMPurify(window);
 marked.setOptions({ breaks: true, gfm: true });
@@ -16,8 +16,8 @@ const translations = {
     attach: "文件",
     connected: "已连接",
     healthChecking: "本地服务检查中",
-    healthReady: "VELA 2.5.0-beta.7 · 就绪",
-    healthDegraded: "VELA 2.5.0-beta.7 · 部分服务离线",
+    healthReady: "VELA 2.5.0-beta.8 · 就绪",
+    healthDegraded: "VELA 2.5.0-beta.8 · 部分服务离线",
     healthMemory: "内存压力较高",
     connecting: "正在连接",
     disconnected: "连接中断",
@@ -147,8 +147,8 @@ const translations = {
     attach: "Attach",
     connected: "Connected",
     healthChecking: "Checking local services",
-    healthReady: "VELA 2.5.0-beta.7 · Ready",
-    healthDegraded: "VELA 2.5.0-beta.7 · Degraded",
+    healthReady: "VELA 2.5.0-beta.8 · Ready",
+    healthDegraded: "VELA 2.5.0-beta.8 · Degraded",
     healthMemory: "High memory pressure",
     connecting: "Connecting",
     disconnected: "Disconnected",
@@ -2432,9 +2432,13 @@ async function loadPlugins() {
 function renderPluginCenter() {
   if (!els.pluginList) return;
   els.pluginList.innerHTML = state.plugins.map((plugin) => {
-    const installed = plugin.state.status !== "available";
-    const status = plugin.state.status === "ready" ? "已就绪" : plugin.state.status === "needs_authorization" ? "等待登录" : "可安装";
-    return `<article class="plugin-card"><div><span>${escapeHtml(plugin.category)}</span><strong>${escapeHtml(plugin.name)}</strong><p>${escapeHtml(plugin.description)}</p></div><div class="plugin-permissions">${plugin.permissions.map((item) => `<small>${escapeHtml(item)}</small>`).join("")}</div><button type="button" ${installed ? `data-remove-plugin="${plugin.id}"` : `data-install-plugin="${plugin.id}"`}>${installed ? (plugin.state.status === "ready" ? "移除" : "配置账户") : "一键接入"}</button><em>${status}</em></article>`;
+    const installed = ["ready", "restart_required", "needs_authorization"].includes(plugin.state.status);
+    const statusLabels = { ready: plugin.state.runtimeActive === true ? "运行中" : "已配置", restart_required: "等待 Agent 重启", needs_authorization: "等待登录", unavailable: "尚未交付", available: "可安装" };
+    const status = statusLabels[plugin.state.status] || "不可用";
+    const action = plugin.state.status === "unavailable"
+      ? `<button type="button" disabled>即将推出</button>`
+      : `<button type="button" ${installed ? `data-remove-plugin="${plugin.id}"` : `data-install-plugin="${plugin.id}"`}>${installed ? "移除" : "一键接入"}</button>`;
+    return `<article class="plugin-card"><div><span>${escapeHtml(plugin.category)}</span><strong>${escapeHtml(plugin.name)}</strong><p>${escapeHtml(plugin.description)}</p></div><div class="plugin-permissions">${plugin.permissions.map((item) => `<small>${escapeHtml(item)}</small>`).join("")}</div>${action}<em>${status}</em></article>`;
   }).join("");
 }
 

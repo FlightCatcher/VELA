@@ -57,7 +57,7 @@ const { autoUpdater } = updaterPackage;
 
 const APP_PORT = 18790;
 const APP_HOST = "127.0.0.1";
-const VELA_RELEASE = "2.5.0-beta.7";
+const VELA_RELEASE = "2.5.0-beta.8";
 const COMFY_PORT = 8188;
 const NATIVE_IMAGE_PORT = 8190;
 const OCU_PORT = 8765;
@@ -2466,7 +2466,10 @@ function createServer() {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
-        sendJson(res, 200, publicPluginCatalog(loadPluginConfig(pluginConfigPath())));
+        let runtimeCapabilities = null;
+        try { runtimeCapabilities = await requestOcuJson("/v1/runtime/capabilities", "GET", null, 1500); }
+        catch { runtimeCapabilities = null; }
+        sendJson(res, 200, publicPluginCatalog(loadPluginConfig(pluginConfigPath()), runtimeCapabilities));
         return;
       }
 

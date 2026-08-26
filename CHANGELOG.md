@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## VELA 2.5.0-beta.8 — real desktop control and truthful plugins - 2026-08-26
+
+- Added screen capture, vision hand-off, cursor position/move, double-click and scroll tools.
+- Improved foreground-window activation without changing Windows security settings.
+- Plugin Center now verifies native runtime capabilities and no longer labels placeholders as ready.
+- Added real Win32 smoke coverage plus 159 Python and 95 desktop regression tests.
+
 ## VELA 2.5.0-beta.7 — cross-platform release fix - 2026-08-25
 
 - Keep the Windows desktop-control implementation importable and type-checkable on Linux and macOS release runners.

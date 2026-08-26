@@ -377,6 +377,19 @@ def _register_desktop_tools(agent: Agent, settings: Settings) -> None:
         return
     desktop = DesktopTools.windows()
     agent.tools.add(
+        name="desktop_screenshot",
+        description=(
+            "截取当前所有屏幕并保存为工作区 PNG。需要定位按钮或输入框时必须先调用，"
+            "然后调用 analyze_image 分析截图，禁止盲目点击。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"filename": {"type": "string", "default": "current-screen.png"}},
+            "additionalProperties": False,
+        },
+        handler=desktop.screenshot,
+    )
+    agent.tools.add(
         name="list_desktop_windows",
         description="列出当前可见的 Windows 窗口。执行任何桌面操作前必须先调用。",
         parameters={"type": "object", "properties": {}, "additionalProperties": False},
@@ -394,8 +407,25 @@ def _register_desktop_tools(agent: Agent, settings: Settings) -> None:
         handler=desktop.activate_window,
     )
     agent.tools.add(
+        name="desktop_cursor_position",
+        description="读取当前鼠标指针的屏幕坐标。",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        handler=desktop.cursor_position,
+    )
+    agent.tools.add(
+        name="desktop_move_cursor",
+        description="把鼠标移动到已通过最新截图确认的绝对屏幕坐标，不执行点击。",
+        parameters={
+            "type": "object",
+            "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "required": ["x", "y"],
+            "additionalProperties": False,
+        },
+        handler=desktop.move_cursor,
+    )
+    agent.tools.add(
         name="desktop_click",
-        description="在当前桌面的绝对屏幕坐标单击。仅在用户明确要求且目标位置已确认时使用。",
+        description="在最新截图已经确认的绝对屏幕坐标单击；未查看截图时禁止调用。",
         parameters={
             "type": "object",
             "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
@@ -403,6 +433,28 @@ def _register_desktop_tools(agent: Agent, settings: Settings) -> None:
             "additionalProperties": False,
         },
         handler=desktop.click,
+    )
+    agent.tools.add(
+        name="desktop_double_click",
+        description="在最新截图已经确认的绝对屏幕坐标双击；未查看截图时禁止调用。",
+        parameters={
+            "type": "object",
+            "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "required": ["x", "y"],
+            "additionalProperties": False,
+        },
+        handler=desktop.double_click,
+    )
+    agent.tools.add(
+        name="desktop_scroll",
+        description="在当前鼠标位置滚动；正数向上，负数向下，每次最多 20 格。",
+        parameters={
+            "type": "object",
+            "properties": {"amount": {"type": "integer", "minimum": -20, "maximum": 20}},
+            "required": ["amount"],
+            "additionalProperties": False,
+        },
+        handler=desktop.scroll,
     )
     agent.tools.add(
         name="desktop_type_text",

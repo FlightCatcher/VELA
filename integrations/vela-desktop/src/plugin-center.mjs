@@ -2,17 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const PLUGIN_CATALOG = Object.freeze([
-  { id: "web-search", name: "网页搜索", category: "研究", description: "检索公开网页并返回来源。", permissions: ["network"], setup: "native" },
-  { id: "browser", name: "浏览器", category: "电脑", description: "打开网页并读取页面状态。", permissions: ["network", "browser"], setup: "native" },
-  { id: "computer-control", name: "电脑控制", category: "电脑", description: "控制窗口、鼠标和键盘；仅完全访问可用。", permissions: ["desktop_control"], setup: "native", requiresFullAccess: true },
-  { id: "home-assistant", name: "Home Assistant", category: "生活", description: "连接本地智能家居。", permissions: ["network", "smart_home"], setup: "configuration" },
+  { id: "web-search", name: "网页搜索", category: "研究", description: "检索并读取公开网页；安装后会验证 Agent 端工具是否真实加载。", permissions: ["network"], setup: "native", implemented: true, runtimeCapability: "web_search" },
+  { id: "browser", name: "浏览器自动化", category: "电脑", description: "规划中：当前版本尚未提供页面视觉与交互后端。", permissions: ["network", "browser"], setup: "unavailable", implemented: false },
+  { id: "computer-control", name: "电脑控制", category: "电脑", description: "截图、视觉分析、窗口、鼠标与键盘；仅完全访问可用。", permissions: ["desktop_control"], setup: "native", implemented: true, runtimeCapability: "desktop_control", requiresFullAccess: true },
+  { id: "home-assistant", name: "Home Assistant", category: "生活", description: "规划中：账户配置界面和实体控制适配器尚未完成。", permissions: ["network", "smart_home"], setup: "unavailable", implemented: false },
   ...[
     ["gmail", "Gmail", "邮件"], ["google-calendar", "Google Calendar", "日程"], ["google-drive", "Google Drive", "云盘"],
     ["outlook-email", "Outlook Email", "邮件"], ["outlook-calendar", "Outlook Calendar", "日程"], ["sharepoint", "SharePoint", "协作"],
     ["slack", "Slack", "沟通"], ["teams", "Microsoft Teams", "沟通"], ["notion", "Notion", "知识"], ["box", "Box", "云盘"],
     ["atlassian-rovo", "Atlassian Rovo", "协作"], ["figma", "Figma", "设计"]
-  ].map(([id, name, category]) => ({ id, name, category, description: `连接 ${name} 账户。`, permissions: ["network", "account_data"], setup: "oauth" })),
-  { id: "custom-mcp", name: "自定义 MCP", category: "开发", description: "接入兼容 MCP 的本地或远程工具服务。", permissions: ["tools"], setup: "configuration" }
+  ].map(([id, name, category]) => ({ id, name, category, description: `${name} 连接入口预留；OAuth 后端尚未随公测版交付。`, permissions: ["network", "account_data"], setup: "unavailable", implemented: false })),
+  { id: "custom-mcp", name: "自定义 MCP", category: "开发", description: "规划中：配置编辑器尚未交付，可暂时通过 configs/mcp.json 接入。", permissions: ["tools"], setup: "unavailable", implemented: false }
 ]);
 
 export function loadPluginConfig(configPath) {
@@ -30,6 +30,7 @@ export function savePluginConfig(configPath, config) {
 export function installPlugin(configPath, pluginId, permissionProfile = "safe") {
   const plugin = PLUGIN_CATALOG.find((item) => item.id === pluginId);
   if (!plugin) throw new Error("未知插件。");
+  if (!plugin.implemented) throw new Error("此插件尚未交付真实后端，当前不能安装。");
   if (plugin.requiresFullAccess && permissionProfile !== "full_access") throw new Error("此插件需要先启用完全访问。");
   const config = loadPluginConfig(configPath);
   config.plugins[plugin.id] = {
@@ -48,9 +49,17 @@ export function uninstallPlugin(configPath, pluginId) {
   return publicPluginCatalog(config);
 }
 
-export function publicPluginCatalog(config) {
+export function publicPluginCatalog(config, runtimeCapabilities = null) {
   const normalized = normalizePluginConfig(config);
-  return { plugins: PLUGIN_CATALOG.map((plugin) => ({ ...plugin, state: normalized.plugins[plugin.id] ?? { enabled: false, status: "available" } })) };
+  return { plugins: PLUGIN_CATALOG.map((plugin) => {
+    const stored = normalized.plugins[plugin.id];
+    if (!plugin.implemented) return { ...plugin, state: { enabled: false, status: "unavailable", runtimeActive: false } };
+    const runtimeActive = plugin.runtimeCapability && runtimeCapabilities
+      ? runtimeCapabilities[plugin.runtimeCapability] === true
+      : null;
+    const status = stored?.status === "ready" && runtimeActive === false ? "restart_required" : (stored?.status ?? "available");
+    return { ...plugin, state: { ...(stored ?? { enabled: false }), status, runtimeActive } };
+  }) };
 }
 
 export function normalizePluginConfig(value) {

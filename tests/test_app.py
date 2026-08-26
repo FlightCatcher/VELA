@@ -69,6 +69,21 @@ def test_build_default_agent_registers_enabled_web_and_desktop_plugins(
         def press_key(self, key):
             return {"key": key}
 
+        def screenshot(self, output_path):
+            return {"path": str(output_path)}
+
+        def cursor_position(self):
+            return {"x": 0, "y": 0}
+
+        def move_cursor(self, x, y):
+            return {"x": x, "y": y}
+
+        def double_click(self, x, y):
+            return {"x": x, "y": y}
+
+        def scroll(self, amount):
+            return {"amount": amount}
+
     monkeypatch.setattr(DesktopTools, "windows", classmethod(lambda cls: cls(FakeBackend())))
     settings = Settings(
         _env_file=None,
@@ -84,6 +99,10 @@ def test_build_default_agent_registers_enabled_web_and_desktop_plugins(
     assert "list_desktop_windows" in agent.tools
     assert "desktop_click" in agent.tools
     assert "desktop_type_text" in agent.tools
+    assert "desktop_screenshot" in agent.tools
+    assert "desktop_move_cursor" in agent.tools
+    assert "desktop_double_click" in agent.tools
+    assert "desktop_scroll" in agent.tools
 
 
 def test_build_default_agent_loads_relative_mcp_config_from_workspace(

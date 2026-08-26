@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.27",
   "loguru>=0.7",
   "ollama>=0.4",
+  "pillow>=11.0",
   "pydantic>=2.8",
   "pydantic-settings>=2.4",
   "pypdf>=5.0",
